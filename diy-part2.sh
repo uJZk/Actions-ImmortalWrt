@@ -18,3 +18,8 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
 # Partition alignment
 sed -i 's/256/4096/g' target/linux/x86/image/Makefile
+# 2. Удаляем китайский язык из интерфейса (принудительно)
+sed -i 's/LUCI_LANG_zh-cn/n/g' .config
+
+# 3. Убираем "китайские" настройки из темы по умолчанию
+sed -i 's/bootstrap/argon/g' feeds/luci/modules/luci-base/Makefile 2>/dev/null || true
