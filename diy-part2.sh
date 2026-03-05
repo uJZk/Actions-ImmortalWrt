@@ -9,17 +9,14 @@
 # File name: diy-part2.sh
 # Description: OpenWrt DIY script part 2 (After Update feeds)
 #
+# 2. Исправляем оболочку с bash на ash (чтобы не ломался SSH)
+sed -i 's/\/bin\/bash/\/bin\/ash/g' package/base-files/files/etc/passwd
 
-# Modify default IP
-sed -i 's/192.168.1.1/192.168.0.1/g' package/base-files/files/bin/config_generate
+# 3. Удаляем китайский язык из интерфейса
+sed -i '/CONFIG_LUCI_LANG_zh-cn=y/d' .config
 
-# Replace ash with bash
-sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
-
-# Partition alignment
-sed -i 's/256/4096/g' target/linux/x86/image/Makefile
-# 2. Удаляем китайский язык из интерфейса (принудительно)
-sed -i 's/LUCI_LANG_zh-cn/n/g' .config
-
-# 3. Убираем "китайские" настройки из темы по умолчанию
-sed -i 's/bootstrap/argon/g' feeds/luci/modules/luci-base/Makefile 2>/dev/null || true
+# 4. Смена зеркал на NJU (Nanjing University)
+sed -i 's/downloads.immortalwrt.org/mirror.nju.edu.cn\/immortalwrt/g' include/target.mk
+sed -i 's/mirrors.vsean.net\/openwrt/mirror.nju.edu.cn\/immortalwrt/g' include/target.mk
+[ -f package/base-files/files/etc/opkg/distfeeds.conf ] && sed -i 's/downloads.immortalwrt.org/mirror.nju.edu.cn\/immortalwrt/g' package/base-files/files/etc/opkg/distfeeds.conf
+[ -f package/base-files/files/etc/opkg/distfeeds.conf ] && sed -i 's/mirrors.vsean.net\/openwrt/mirror.nju.edu.cn\/immortalwrt/g' package/base-files/files/etc/opkg/distfeeds.conf
