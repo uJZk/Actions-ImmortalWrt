@@ -14,9 +14,3 @@ sed -i 's/\/bin\/bash/\/bin\/ash/g' package/base-files/files/etc/passwd
 
 # 3. Удаляем китайский язык из интерфейса
 sed -i '/CONFIG_LUCI_LANG_zh-cn=y/d' .config
-
-# 4. Смена зеркал на NJU (Nanjing University)
-sed -i 's/downloads.immortalwrt.org/mirror.nju.edu.cn\/immortalwrt/g' include/target.mk
-sed -i 's/mirrors.vsean.net\/openwrt/mirror.nju.edu.cn\/immortalwrt/g' include/target.mk
-[ -f package/base-files/files/etc/opkg/distfeeds.conf ] && sed -i 's/downloads.immortalwrt.org/mirror.nju.edu.cn\/immortalwrt/g' package/base-files/files/etc/opkg/distfeeds.conf
-[ -f package/base-files/files/etc/opkg/distfeeds.conf ] && sed -i 's/mirrors.vsean.net\/openwrt/mirror.nju.edu.cn\/immortalwrt/g' package/base-files/files/etc/opkg/distfeeds.conf
