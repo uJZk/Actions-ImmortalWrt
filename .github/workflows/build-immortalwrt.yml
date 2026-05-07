@@ -61,7 +61,7 @@ jobs:
         sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
         # sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
         sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-        # sudo -E apt remove -y docker --fix-missing
+        # sudo -E apt remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin --fix-missing
         # sudo -E apt -y autoremove --purge
         sudo mkdir -p /workdir
         # Fix the permissions by using $(whoami)
