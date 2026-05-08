@@ -58,7 +58,6 @@ jobs:
 
     - name: Initialization environment
       run: |
-        ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
         mkdir -p /workdir
 
     # - name: Free up disk space again
