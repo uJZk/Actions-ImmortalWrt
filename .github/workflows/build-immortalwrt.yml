@@ -40,16 +40,16 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-latest
 
     steps:
     - name: Free up disk space
       uses: jlumbroso/free-disk-space@main
       with:
         tool-cache: false
-        android: false
-        dotnet: false
-        haskell: false
+        android: true
+        dotnet: true
+        haskell: true
         large-packages: true
         docker-images: true
         swap-storage: false
@@ -86,7 +86,7 @@ jobs:
       uses: actions/setup-go@v6
       with:
         go-version: 'stable'
-        check-latest: true
+        cache: false
 
     - name: Clone source code
       working-directory: /workdir
