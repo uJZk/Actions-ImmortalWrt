@@ -41,6 +41,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-slim
+    container:
+      image: docker.io/immortalwrt/imagebuilder:x86-64-master
 
     steps:
     # - name: Free up disk space
@@ -55,18 +57,9 @@ jobs:
     #     swap-storage: false
 
     - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
-        sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-        sudo -E apt remove -y docker-ce-cli docker-buildx-plugin docker-compose-plugin --fix-missing
-        sudo -E apt -y autoremove --purge
-        sudo rm -rf /usr/bin/go /usr/bin/gofmt /usr/lib/go-* /usr/lib/go[0-9]*
-        sudo mkdir -p /workdir
-        # Fix the permissions by using $(whoami)
-        sudo chown -R $(whoami):$(whoami) /workdir
+        ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
+        mkdir -p /workdir
 
     # - name: Free up disk space again
     #   uses: jlumbroso/free-disk-space@main
@@ -237,4 +230,3 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
         name: ${{ env.BRANCH_NAME }} ${{ env.DEVICE_NAME }}
         tag_name: ${{ env.BRANCH_NAME }}_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
-
