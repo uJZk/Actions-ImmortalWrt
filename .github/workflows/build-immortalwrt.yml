@@ -17,17 +17,17 @@ on:
       ssh:
         description: 'SSH connection to Actions'
         required: false
-        default: 'false'
+        default: false
         type: boolean
       nocache:
         description: 'Clean Building Cache'
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: openwrt-25.12
   BRANCH_NAME: ImmortalWrt
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -42,7 +42,7 @@ jobs:
   build:
     runs-on: ubuntu-slim
 
-    steps:  
+    steps:
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
