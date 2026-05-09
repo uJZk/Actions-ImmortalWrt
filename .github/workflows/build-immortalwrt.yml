@@ -31,8 +31,8 @@ env:
   BRANCH_NAME: ImmortalWrt
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
+  BEFORE_FEED_SH: before-install-feed.sh
+  AFTER_FEED_SH: after-install-feed.sh
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
@@ -43,17 +43,23 @@ jobs:
     runs-on: ubuntu-slim
 
     steps:
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
-        sudo rm -rf /etc/apt/sources.list.d/*
-        sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-        sudo -apt -y autoremove golang-* --purge
-        sudo rm -rf /usr/bin/go /usr/bin/gofmt /usr/lib/go-* /usr/lib/go-[0-9]*
-        sudo mkdir -p /workdir
-        sudo chown -R $(whoami):$(whoami) /workdir
+    - name: SSH connection to Actions
+      uses: owenthereal/action-upterm@v1
+      if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      with:
+        wait-timeout-minutes: 15
+    
+    # - name: Initialization environment
+    #   env:
+    #     DEBIAN_FRONTEND: noninteractive
+    #   run: |
+    #     sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
+    #     sudo rm -rf /etc/apt/sources.list.d/*
+    #     sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+    #     sudo -apt -y autoremove golang-* --purge
+    #     sudo rm -rf /usr/bin/go /usr/bin/gofmt /usr/lib/go-* /usr/lib/go-[0-9]*
+    #     sudo mkdir -p /workdir
+    #     sudo chown -R $(whoami):$(whoami) /workdir
 
     - name: Setup latest stable Go
       uses: actions/setup-go@v6
@@ -92,9 +98,9 @@ jobs:
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
+        chmod +x $BEFORE_FEED_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        $GITHUB_WORKSPACE/$BEFORE_FEED_SH
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -106,9 +112,9 @@ jobs:
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        chmod +x $AFTER_FEED_SH
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        $GITHUB_WORKSPACE/$AFTER_FEED_SH
         cat package/emortal/default-settings/files/99-default-settings
 
     - name: Set variables
@@ -124,7 +130,7 @@ jobs:
         sed -i "/exit 0/i\sed -i '/DISTRIB_GITHUB/d' /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
         sed -i "/DISTRIB_GITHUB/a\echo \"DISTRIB_GITHUB=\'https://github.com/${{github.repository}}\'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
         sed -i "/exit 0/i\sed -i '/DISTRIB_VERSIONS/d' /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
-        sed -i "/DISTRIB_VERSIONS/a\echo \"DISTRIB_VERSIONS=\'${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}\'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
+        sed -i "/DISTRIB_VERSIONS/a\echo \"DISTRIB_VERSIONS=\'${{env.BUILD_TIME}}_${{env.BUILD_NUMBER}}\'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
         sudo chmod +x openwrt/files/usr/bin/easyupdate.sh
 
     - name: SSH connection to Actions
