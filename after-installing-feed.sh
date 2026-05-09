@@ -18,11 +18,3 @@ sed -i 's/\/bin\/ash/\/bin\/bash/' package/base-files/files/etc/passwd
 
 # Partition alignment
 sed -i 's/256/4096/g' target/linux/x86/image/Makefile
-
-# Remove the default daed and luci-app-daed packages
-rm -rf feeds/packages/net/daed
-rm -rf feeds/luci/applications/luci-app-daed
-
-# Explicitly install the packages from your custom feed
-./scripts/feeds install -p daed -f daed
-./scripts/feeds install -p daed -f luci-app-daed
