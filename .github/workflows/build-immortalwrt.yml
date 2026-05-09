@@ -79,10 +79,8 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
-        sudo apt update
-        sudo apt -y install erofs-utils
-        sudo rm -rf /etc/apt/sources.list.d/*
         sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+        sudo apt -y install erofs-utils
         sudo apt -y autoremove golang-* --purge
         sudo rm -rf /usr/bin/go /usr/bin/gofmt /usr/lib/go-* /usr/lib/go-[0-9]*
         sudo mkdir -p /workdir
