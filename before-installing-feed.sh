@@ -8,7 +8,3 @@ sed -i '/video/d' feeds.conf.default
 echo 'src-git daed https://github.com/QiuSimons/luci-app-daed' >> feeds.conf.default
 echo 'src-git wrtbwmon https://github.com/brvphoenix/wrtbwmon' >> feeds.conf.default
 echo 'src-git wrtbwmon_luci https://github.com/brvphoenix/luci-app-wrtbwmon' >> feeds.conf.default
-
-# Fix qbittorrent recursive dependency
-rm -rf package/feeds/luci/luci-app-qbittorrent
-rm -rf feeds/luci/applications/luci-app-qbittorrent
