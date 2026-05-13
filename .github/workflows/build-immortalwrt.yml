@@ -80,7 +80,7 @@ jobs:
       run: |
         sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
         sudo apt update
-        sudo apt -y install erofs-utils tmux
+        sudo apt -y install erofs-utils tmux gawk
         sudo apt-mark hold azure-cli distro-info-data docker-ce-cli dpkg dpkg-dev git git-man libdpkg-perl libnghttp2-14 libpng16-16t64 powershell xxd
         sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
         sudo apt -y autoremove golang-* --purge
