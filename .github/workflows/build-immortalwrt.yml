@@ -74,6 +74,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - name: Set fallback for empty inputs
+      id: set-inputs-fallback
+      run: |
+        echo "INPUT_REPO=${{ inputs.repo || 'https://github.com/immortalwrt/immortalwrt' }}" >> $GITHUB_ENV
+        echo "INPUT_BRANCH=${{ inputs.branch || 'openwrt-25.12' }}" >> $GITHUB_ENV
+        echo "INPUT_NAME=${{ inputs.name || 'ImmortalWrt' }}" >> $GITHUB_ENV
+        echo "INPUT_FEEDS_CONF=${{ inputs.feeds_conf || 'feeds.conf.default' }}" >> $GITHUB_ENV
+        echo "INPUT_CONFIG=${{ inputs.config || '.config' }}" >> $GITHUB_ENV
+        echo "INPUT_KERNEL_CONFIG=${{ inputs.kernel_config || 'config-6.12' }}" >> $GITHUB_ENV
+        echo "INPUT_ARTIFACT=${{ (inputs.artifact == null || inputs.artifact == '') && 'true' || inputs.artifact }}" >> $GITHUB_ENV
+        echo "INPUT_RELEASE=${{ (inputs.release == null || inputs.release == '') && 'false' || inputs.release }}" >> $GITHUB_ENV
+        echo "INPUT_BINDIR=${{ (inputs.bindir == null || inputs.bindir == '') && 'false' || inputs.bindir }}" >> $GITHUB_ENV
+
     - name: Free up disk space
       uses: jlumbroso/free-disk-space@main
       with:
@@ -92,7 +105,7 @@ jobs:
         sudo ln -snf /usr/share/zoneinfo/$TZ /etc/localtime
         sudo apt update
         sudo apt -y install erofs-utils tmux gawk qemu-utils
-        sudo apt-mark hold apache2 apache2-bin apache2-data apache2-utils azure-cli curl distro-info-data docker-ce-cli dpkg-dev dpkg gh  gir1.2-packagekitglib-1.0 git git-man iproute2 kmod kubectl libavahi-client3 libavahi-common-data libavahi-common3 libcap2 libcap2-bin libcurl3t64-gnutls libcurl4t64 libdpkg-perl libnghttp2-14 libpng16-16t64 libkmod2 liblcms2-2 libntfs-3g89t64 libpackagekit-glib2-18 libpam-cap libpolkit-agent-1-0 libpolkit-gobject-1-0 linux-azure linux-cloud-tools-azure linux-cloud-tools-common linux-headers-azure linux-image-azure linux-tools-azure linux-tools-common nginx nginx-common ntfs-3g open-vm-tools openssh-client openssh-server openssh-sftp-server packagekit packagekit-tools powershell rsyslog snapd ssh ubuntu-pro-client ubuntu-pro-client-l10n vim vim-common vim-runtime vim-tiny xxd
+        sudo apt-mark hold apache2 apache2-bin apache2-data apache2-utils azure-cli curl distro-info-data docker-ce-cli dpkg-dev dpkg gh  gir1.2-packagekitglib-1.0 git git-man iproute2 kmod kubectl li[...]
         sudo bash -c 'bash <(curl -s https://build-scripts.immortalwrt.org/init_build_environment.sh)'
         sudo apt -y autoremove golang-* --purge
         sudo rm -rf /usr/bin/go /usr/bin/gofmt /usr/lib/go-* /usr/lib/go-[0-9]*
@@ -123,7 +136,7 @@ jobs:
       working-directory: /workdir
       run: |
         df -hT $PWD
-        git clone --depth=1 ${{ inputs.repo }} -b ${{ inputs.branch }} openwrt
+        git clone --depth=1 "$INPUT_REPO" -b "$INPUT_BRANCH" openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
     - name: Free up disk space again again
@@ -146,7 +159,7 @@ jobs:
 
     - name: Load custom feeds
       run: |
-        [ -e ${{ inputs.feeds_conf }} ] && mv ${{ inputs.feeds_conf }} openwrt/feeds.conf.default
+        [ -e "$INPUT_FEEDS_CONF" ] && mv "$INPUT_FEEDS_CONF" openwrt/feeds.conf.default
         chmod +x $BEFORE_FEED_SH
         cd openwrt
         $GITHUB_WORKSPACE/$BEFORE_FEED_SH
@@ -160,8 +173,8 @@ jobs:
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
-        [ -e ${{ inputs.config }} ] && mv ${{ inputs.config }} openwrt/.config
-        [ -e ${{ inputs.kernel_config }} ] && mv ${{ inputs.kernel_config }} openwrt/target/linux/x86/${{ inputs.kernel_config }}
+        [ -e "$INPUT_CONFIG" ] && mv "$INPUT_CONFIG" openwrt/.config
+        [ -e "$INPUT_KERNEL_CONFIG" ] && mv "$INPUT_KERNEL_CONFIG" openwrt/target/linux/x86/"$INPUT_KERNEL_CONFIG"
         chmod +x $AFTER_FEED_SH
         cd openwrt
         $GITHUB_WORKSPACE/$AFTER_FEED_SH
@@ -178,9 +191,9 @@ jobs:
     - name: Make Easy Update Script happy
       run: |
         sed -i "/exit 0/i\sed -i '/DISTRIB_GITHUB/d' /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
-        sed -i "/DISTRIB_GITHUB/a\echo \"DISTRIB_GITHUB=\'https://github.com/${{github.repository}}\'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
+        sed -i "/DISTRIB_GITHUB/a\echo \"DISTRIB_GITHUB='https://github.com/${{github.repository}}'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
         sed -i "/exit 0/i\sed -i '/DISTRIB_VERSIONS/d' /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
-        sed -i "/DISTRIB_VERSIONS/a\echo \"DISTRIB_VERSIONS=\'${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}\'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-settings
+        sed -i "/DISTRIB_VERSIONS/a\echo \"DISTRIB_VERSIONS='${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}'\" >> /etc/openwrt_release" openwrt/package/emortal/default-settings/files/99-default-setti[...]
         sudo chmod +x openwrt/files/usr/bin/easyupdate.sh
 
     - name: SSH connection to Actions
@@ -212,14 +225,14 @@ jobs:
 
     - name: Upload bin directory
       uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && inputs.bindir && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.INPUT_BINDIR == 'true' && !cancelled()
       with:
-        name: ${{ inputs.name }}_bin_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        name: ${{ env.INPUT_NAME }}_bin_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
         path: openwrt/bin
 
     - name: Get environment path
       id: environment
-      if: inputs.bindir && !cancelled()
+      if: env.INPUT_BINDIR == 'true' && !cancelled()
       run: |
         cd openwrt/bin/
         echo "WORKSPACE_DIR=$PWD" >> $GITHUB_ENV
@@ -234,7 +247,7 @@ jobs:
         type: tar
         path: packages/
         directory: ${{ env.UPLOAD_PATH }}/
-        filename: ${{ env.UPLOAD_PATH }}/${{ inputs.name }}_firmware_kernel_packages_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}.tar.gz
+        filename: ${{ env.UPLOAD_PATH }}/${{ env.INPUT_NAME }}_firmware_kernel_packages_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}.tar.gz
 
     - name: Compressed firmware packages
       uses: thedoctor0/zip-release@master
@@ -243,11 +256,11 @@ jobs:
         type: tar
         path: packages/
         directory: ${{ env.WORKSPACE_DIR }}/
-        filename: ${{ env.UPLOAD_PATH }}/${{ inputs.name }}_firmware_packages_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}.tar.gz
+        filename: ${{ env.UPLOAD_PATH }}/${{ env.INPUT_NAME }}_firmware_packages_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}.tar.gz
 
     - name: Organize files
       id: organize
-      if: inputs.artifact && steps.compile.outputs.status == 'success' && !cancelled()
+      if: env.INPUT_ARTIFACT == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
@@ -258,16 +271,17 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: ${{ inputs.name }}_firmware_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        name: ${{ env.INPUT_NAME }}_firmware_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
         path: ${{ env.FIRMWARE }}
 
     - name: Upload firmware to release
       uses: softprops/action-gh-release@v2
-      if: inputs.release && steps.compile.outputs.status == 'success' && !cancelled()
+      if: env.INPUT_RELEASE == 'true' && steps.compile.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         files: ${{ env.FIRMWARE }}/*
-        name: ${{ inputs.name }} ${{ env.DEVICE_NAME }}
-        tag_name: ${{ inputs.name }}_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        name: ${{ env.INPUT_NAME }} ${{ env.DEVICE_NAME }}
+        tag_name: ${{ env.INPUT_NAME }}_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+
 
