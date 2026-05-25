@@ -21,7 +21,7 @@ on:
       update:
         description: 'Forced Updating'
         required: false
-        default: 'false'
+        default: false
         type: boolean
   schedule:
     - cron: 18 18 * * *
@@ -50,7 +50,7 @@ jobs:
         echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
 
     - name: Trigger build
-      if: steps.cacheHash.outputs.cache-hit != 'true' || github.event.inputs.update == 'true'
+      if: steps.cacheHash.outputs.cache-hit != 'true' || inputs.update
       uses: peter-evans/repository-dispatch@main
       with:
         token: ${{ secrets.GITHUB_TOKEN  }}
