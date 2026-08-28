@@ -55,6 +55,12 @@ jobs:
       with:
         token: ${{ secrets.GITHUB_TOKEN  }}
         event-type: Source Code Update
+        # repository_dispatch leaves the inputs context empty, so anything not
+        # named here falls back to the hardcoded default in the build's "Set
+        # default inputs" step -- and release defaults to false. Without this
+        # payload the nightly build only ever uploads an artifact, while the
+        # cleanup step below keeps pruning releases nothing creates.
+        client-payload: '{"release": "true"}'
 
     - name: Remove old Releases and workflow runs
       uses: ophub/delete-releases-workflows@main
