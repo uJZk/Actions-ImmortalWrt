@@ -1,0 +1,50 @@
+#!/bin/sh
+# CONFIG_XPS and CONFIG_NET_FLOW_LIMIT build the mechanism into the kernel but
+# ship an all-zero CPU mask, so both need arming at runtime.
+#
+# RPS and RFS are not set here. OpenWrt's own packet_steering service (S25,
+# /usr/libexec/network/packet-steering.uc) owns rps_cpus and rps_flow_cnt, runs
+# after every net hotplug event and overwrites them unconditionally, so a
+# hotplug handler cannot win that race; they are configured through
+# network.globals.packet_steering and network.globals.steering_flows instead.
+# The global rps_sock_flow_entries belongs to ImmortalWrt's /etc/init.d/autocore.
+# packet-steering.uc never touches XPS or flow limit -- that is what this script
+# is for.
+#
+# Physical NICs are selected by shape (a device symlink present, no lower_*),
+# not by a name blacklist: a blacklist lets devices such as tailscale0 through,
+# and their xps_cpus reads back empty and swallows writes, so the script can
+# look like it worked while arming no queue at all. The same test excludes
+# bridges, veth, ifb, pppoe and tunnels.
+ncpu=0
+for c in /sys/devices/system/cpu/cpu[0-9]*; do
+	[ -d "$c" ] && ncpu=$((ncpu + 1))
+done
+[ "$ncpu" -gt 0 ] || exit 0
+
+# xps_cpus takes comma-separated 32-bit hex groups, most significant first; a
+# single printf overflows past 32 CPUs.
+full=$((ncpu / 32))
+rem=$((ncpu % 32))
+mask=""
+[ "$rem" -gt 0 ] && mask=$(printf '%x' $(( (1 << rem) - 1 )))
+while [ "$full" -gt 0 ]; do
+	mask="${mask:+$mask,}ffffffff"
+	full=$((full - 1))
+done
+
+# Flow limit keeps a single elephant flow from filling the backlog that
+# sysctl.d deepens and starving every other flow.
+[ -e /proc/sys/net/core/flow_limit_cpu_bitmap ] &&
+	echo "$mask" > /proc/sys/net/core/flow_limit_cpu_bitmap 2>/dev/null
+
+for dev in /sys/class/net/*; do
+	[ -e "$dev/device" ] || continue
+	set -- "$dev"/lower_*
+	[ -e "$1" ] && continue
+	for q in "$dev"/queues/tx-*/xps_cpus; do
+		[ -e "$q" ] && echo "$mask" > "$q" 2>/dev/null
+	done
+done
+
+exit 0

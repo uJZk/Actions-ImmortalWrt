@@ -1,0 +1,11 @@
+#!/bin/sh
+# luci-base ships /etc/config/luci with mediaurlbase pointing at
+# /luci-static/bootstrap, a theme this image does not contain. footstrap's own
+# 30_luci-theme-footstrap only writes the option when it is missing (its set_opt
+# returns early on any existing value), so first boot lands on a directory that
+# is not there. Correct it unconditionally; the 90 prefix runs after 30_.
+[ -d /www/luci-static/footstrap ] || exit 0
+[ "$(uci -q get luci.main.mediaurlbase)" = /luci-static/footstrap ] && exit 0
+uci set luci.main.mediaurlbase=/luci-static/footstrap
+uci commit luci
+exit 0

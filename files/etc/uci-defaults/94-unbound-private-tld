@@ -1,0 +1,33 @@
+#!/bin/sh
+# Negate private-use TLDs locally so internal names never leak to public DNS.
+# unbound already covers home.arpa / local / invalid / onion / test /
+# resolver.arpa / service.arpa; this adds only the ones it misses.
+#
+# The device's own LAN domain must be skipped. unbound.ub_main.domain defaults
+# to internal, but /etc/config/unbound is preserved by sysupgrade and may still
+# say lan or something else; making the live LAN domain always_nxdomain breaks
+# every internal hostname and reports an error nowhere. Read it out instead of
+# hardcoding a list.
+#
+# Written into unbound_srv.conf, which the generated unbound.conf includes
+# inside the server: clause. That file is an apk conffile preserved by
+# sysupgrade, so a marker block keeps repeated flashes from appending forever.
+SRV=/etc/unbound/unbound_srv.conf
+MARK='# >>> private-tld (managed by /etc/uci-defaults/94-unbound-private-tld)'
+
+[ -f "$SRV" ] || exit 0
+grep -qF "$MARK" "$SRV" && exit 0
+
+lan_domain="$(uci -q get unbound.ub_main.domain)"
+
+{
+	echo ""
+	echo "$MARK"
+	for tld in lan home intranet private corp internal localdomain; do
+		[ "$tld" = "$lan_domain" ] && continue
+		printf 'local-zone: "%s." always_nxdomain\n' "$tld"
+	done
+	echo '# <<< private-tld'
+} >> "$SRV"
+
+exit 0

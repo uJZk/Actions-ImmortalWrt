@@ -1,0 +1,22 @@
+Container definitions read by `/usr/bin/podman-stack update`.
+
+One .conf file per container, in sh assignment form:
+
+    NAME=SmartDNS
+    IMAGE=docker.io/pymumu/smartdns:latest
+    create() {
+        podman create --name "$NAME" \
+            --network=host --restart=always --cap-add=NET_RAW \
+            --volume smartdns-conf:/etc/smartdns \
+            "$IMAGE"
+    }
+
+create() has to be written out by hand because podman offers no primitive
+that rebuilds a container in place on a new image. `podman auto-update` only
+recognises the PODMAN_SYSTEMD_UNIT label a quadlet writes, and
+`podman container clone` silently drops --network=host (the clone comes back
+on bridge) and every --cap-add, leaving a container that cannot start here.
+So update can only re-create from the original arguments given here.
+
+This directory ships empty, so update does nothing by default. watchdog needs
+no definitions and works on any running container that has a health probe.

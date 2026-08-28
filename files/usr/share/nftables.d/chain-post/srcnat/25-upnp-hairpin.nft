@@ -1,0 +1,13 @@
+# Return-path SNAT for UPnP NAT loopback (hairpin). The other half lives in
+# after-installing-feed.sh, which strips the iif match from miniupnpd's DNAT
+# rules and adds an fib guard at the dstnat jump.
+#
+# One rule covers every mapping. ct status dnat scopes it to connections that
+# were actually DNATed; traffic between hosts on the same subnet goes directly
+# over layer 2 and is never forwarded by the router, so a br-lan in / br-lan
+# out forwarded packet is a loopback packet and nothing else.
+#
+# Without it hairpin simply fails: after DNAT the server still sees the original
+# source address and replies directly over layer 2 from its own LAN address,
+# while the client is waiting on the public address, so the connection is RST.
+iifname "br-lan" oifname "br-lan" ct status dnat masquerade comment "!upnp: NAT loopback";

@@ -1,0 +1,641 @@
+#
+# Copyright (c) 2019-2020 P3TERX <https://p3terx.com>
+#
+# This is free software, licensed under the MIT License.
+# See /LICENSE for more information.
+#
+# https://github.com/P3TERX/Actions-OpenWrt
+# Description: Build OpenWrt using GitHub Actions
+#
+
+name: Build ImmortalWrt
+
+on:
+  repository_dispatch:
+    types: [Source Code Update, Retry on AMD]
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: 'SSH connection to Actions'
+        required: false
+        default: false
+        type: boolean
+      nocache:
+        description: 'Clean Building Cache'
+        required: false
+        default: false
+        type: boolean
+      repo:
+        description: 'Repo URL'
+        required: false
+        default: https://github.com/immortalwrt/immortalwrt
+      branch:
+        description: 'Repo Branch (use latest to resolve the newest openwrt-YY.MM stable branch)'
+        required: false
+        default: master
+      name:
+        description: 'Firmware Name'
+        required: false
+        default: ImmortalWrt
+      feeds_conf:
+        description: 'Custom feeds file'
+        required: false
+        default: 'feeds.conf.default'
+      config:
+        description: 'Custom build config'
+        required: false
+        default: '.config'
+      kernel_config:
+        description: "Custom kernel build config (the version in the filename is rewritten to the source tree's kernel version)"
+        required: false
+        default: 'config-6.18'
+      artifact:
+        description: 'Upload firmware to artifact'
+        required: false
+        default: true
+        type: boolean
+      release:
+        description: 'Upload firmware to release'
+        required: false
+        default: false
+        type: boolean
+      bindir:
+        description: 'Upload bin to artifact'
+        required: false
+        default: false
+        type: boolean
+      attempt:
+        description: 'Attempt number (auto-incremented by the AMD runner retry; leave empty on manual dispatch)'
+        required: false
+        default: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.client_payload.branch || inputs.branch || 'default' }}
+  cancel-in-progress: false
+
+env:
+  BEFORE_FEED_SH: before-installing-feed.sh
+  AFTER_FEED_SH: after-installing-feed.sh
+  TZ: UTC
+  # The build root lives on /mnt, the host's large disk. Everything under it is
+  # a real directory; only $GITHUB_WORKSPACE/openwrt is a symlink to it. Cache
+  # paths must stay workspace-relative (openwrt/xxx) so tar follows that symlink
+  # on both save and restore.
+  BUILD_ROOT: /mnt/openwrt
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write          # required by softprops/action-gh-release
+      actions: write           # cancel this run and re-dispatch when not on AMD
+    container:
+      # No tag, so this resolves to :latest and floats. The v3.11.8 is the
+      # buildbot framework version and part of the image name itself -- upstream
+      # publishes no alias to point at instead.
+      image: ghcr.io/openwrt/buildbot/buildworker-v3.11.8
+      volumes:
+        - /mnt:/mnt
+
+    steps:
+    # repository_dispatch leaves the inputs context empty and workflow_dispatch
+    # leaves client_payload empty. A GitHub expression cannot merge them: its ||
+    # treats a boolean false as unset and falls through to the default. So the
+    # merge happens in shell.
+    - name: Set default inputs
+      env:
+        INPUT_SSH: ${{ inputs.ssh }}
+        INPUT_NOCACHE: ${{ inputs.nocache }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_NAME: ${{ inputs.name }}
+        INPUT_FEEDS_CONF: ${{ inputs.feeds_conf }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_KERNEL_CONFIG: ${{ inputs.kernel_config }}
+        INPUT_ARTIFACT: ${{ inputs.artifact }}
+        INPUT_RELEASE: ${{ inputs.release }}
+        INPUT_BINDIR: ${{ inputs.bindir }}
+        INPUT_ATTEMPT: ${{ inputs.attempt }}
+        PAYLOAD_SSH: ${{ github.event.client_payload.ssh }}
+        PAYLOAD_NOCACHE: ${{ github.event.client_payload.nocache }}
+        PAYLOAD_REPO: ${{ github.event.client_payload.repo }}
+        PAYLOAD_BRANCH: ${{ github.event.client_payload.branch }}
+        PAYLOAD_NAME: ${{ github.event.client_payload.name }}
+        PAYLOAD_FEEDS_CONF: ${{ github.event.client_payload.feeds_conf }}
+        PAYLOAD_CONFIG: ${{ github.event.client_payload.config }}
+        PAYLOAD_KERNEL_CONFIG: ${{ github.event.client_payload.kernel_config }}
+        PAYLOAD_ARTIFACT: ${{ github.event.client_payload.artifact }}
+        PAYLOAD_RELEASE: ${{ github.event.client_payload.release }}
+        PAYLOAD_BINDIR: ${{ github.event.client_payload.bindir }}
+        PAYLOAD_ATTEMPT: ${{ github.event.client_payload.attempt }}
+      run: |
+        # Strip newlines: one embedded in client_payload would inject extra
+        # variables into $GITHUB_ENV.
+        san() { printf '%s' "$1" | tr -d '\r\n'; }
+        {
+          echo "SSH=$(san "${PAYLOAD_SSH:-${INPUT_SSH:-false}}")"
+          echo "NOCACHE=$(san "${PAYLOAD_NOCACHE:-${INPUT_NOCACHE:-false}}")"
+          echo "REPO_URL=$(san "${PAYLOAD_REPO:-${INPUT_REPO:-https://github.com/immortalwrt/immortalwrt}}")"
+          echo "REPO_BRANCH=$(san "${PAYLOAD_BRANCH:-${INPUT_BRANCH:-master}}")"
+          echo "FIRMWARE_NAME=$(san "${PAYLOAD_NAME:-${INPUT_NAME:-ImmortalWrt}}")"
+          echo "FEEDS_CONF=$(san "${PAYLOAD_FEEDS_CONF:-${INPUT_FEEDS_CONF:-feeds.conf.default}}")"
+          echo "BUILD_CONFIG=$(san "${PAYLOAD_CONFIG:-${INPUT_CONFIG:-.config}}")"
+          echo "KERNEL_CONFIG=$(san "${PAYLOAD_KERNEL_CONFIG:-${INPUT_KERNEL_CONFIG:-config-6.18}}")"
+          echo "ARTIFACT=$(san "${PAYLOAD_ARTIFACT:-${INPUT_ARTIFACT:-true}}")"
+          echo "DO_RELEASE=$(san "${PAYLOAD_RELEASE:-${INPUT_RELEASE:-false}}")"
+          echo "KEEP_BINDIR=$(san "${PAYLOAD_BINDIR:-${INPUT_BINDIR:-false}}")"
+          echo "ATTEMPT=$(san "${PAYLOAD_ATTEMPT:-${INPUT_ATTEMPT:-1}}")"
+        } >> "$GITHUB_ENV"
+
+    # The runner's CPU vendor is fixed at allocation and cannot be changed
+    # within a run, so retrying means starting a new run: on a non-AMD runner,
+    # re-dispatch with attempt+1 and cancel this one. After 5 attempts, build on
+    # whatever was allocated so a firmware always comes out.
+    - name: Require an AMD runner
+      id: cpu
+      run: |
+        vendor=$(awk -F': ' '/^vendor_id/{print $2; exit}' /proc/cpuinfo)
+        model=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo)
+        # attempt arrives from client_payload as external input: keep digits
+        # only, and treat anything unusable as attempt 1.
+        attempt=$(printf '%s' "$ATTEMPT" | tr -cd '0-9')
+        [ -n "$attempt" ] || attempt=1
+        echo "::notice::attempt $attempt/5 — $vendor / $model"
+        if [ "$vendor" = "AuthenticAMD" ]; then
+          echo "retry=false" >> "$GITHUB_OUTPUT"
+        elif [ "$attempt" -ge 5 ]; then
+          echo "::warning::no AMD runner after 5 attempts, building on $vendor"
+          echo "retry=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "next=$((attempt + 1))" >> "$GITHUB_OUTPUT"
+          echo "retry=true" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Re-dispatch onto another runner
+      if: steps.cpu.outputs.retry == 'true'
+      uses: peter-evans/repository-dispatch@main
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        event-type: Retry on AMD
+        client-payload: |
+          {
+            "attempt": "${{ steps.cpu.outputs.next }}",
+            "ssh": "${{ env.SSH }}",
+            "nocache": "${{ env.NOCACHE }}",
+            "repo": "${{ env.REPO_URL }}",
+            "branch": "${{ env.REPO_BRANCH }}",
+            "name": "${{ env.FIRMWARE_NAME }}",
+            "feeds_conf": "${{ env.FEEDS_CONF }}",
+            "config": "${{ env.BUILD_CONFIG }}",
+            "kernel_config": "${{ env.KERNEL_CONFIG }}",
+            "artifact": "${{ env.ARTIFACT }}",
+            "release": "${{ env.DO_RELEASE }}",
+            "bindir": "${{ env.KEEP_BINDIR }}"
+          }
+
+    - name: Cancel this run
+      if: steps.cpu.outputs.retry == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        curl -sS -X POST \
+          -H "Authorization: Bearer $GH_TOKEN" \
+          -H "Accept: application/vnd.github+json" \
+          "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/cancel"
+        # Cancellation is asynchronous. Wait for it, and exit non-zero so the
+        # later steps do not run if it never lands.
+        sleep 60
+        exit 1
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime
+        git config --system --add safe.directory '*'
+        # tmux is only needed for SSH debugging; erofs-utils makes the erofs rootfs
+        pkgs=""
+        command -v mkfs.erofs >/dev/null 2>&1 || pkgs="$pkgs erofs-utils"
+        # The prebuilt LLVM-BPF tarball is .tar.zst
+        command -v zstd >/dev/null 2>&1 || pkgs="$pkgs zstd"
+        if [ "$SSH" = "true" ]; then
+          command -v tmux >/dev/null 2>&1 || pkgs="$pkgs tmux"
+        fi
+        if [ -n "$pkgs" ]; then
+          apt-get -qq update
+          apt-get -y -qq install $pkgs
+        else
+          echo "nothing to install"
+        fi
+
+    - name: Checkout
+      uses: actions/checkout@main
+      with:
+        persist-credentials: false
+
+    # Derive the target from .config so nothing like target/linux/x86 has to be
+    # hardcoded in the workflow.
+    - name: Resolve build target
+      run: |
+        board=""; sub=""
+        conf="$BUILD_CONFIG"
+        if [ -f "$conf" ]; then
+          # A full .config carries CONFIG_TARGET_BOARD / _SUBTARGET directly
+          board=$(sed -nE 's/^CONFIG_TARGET_BOARD="(.*)"$/\1/p' "$conf" | head -n1)
+          sub=$(sed -nE 's/^CONFIG_TARGET_SUBTARGET="(.*)"$/\1/p' "$conf" | head -n1)
+          # A seed config does not: reverse-parse
+          # CONFIG_TARGET_<board>_<subtarget>=y instead. Lowercase only, to skip
+          # CONFIG_TARGET_MULTI_PROFILE / _ROOTFS_ and friends.
+          if [ -z "$board" ]; then
+            line=$(grep -m1 -E '^CONFIG_TARGET_[a-z0-9]+_[a-z0-9]+=y$' "$conf" || true)
+            board=$(printf '%s' "$line" | sed -nE 's/^CONFIG_TARGET_([a-z0-9]+)_[a-z0-9]+=y$/\1/p')
+            sub=$(printf '%s' "$line" | sed -nE 's/^CONFIG_TARGET_[a-z0-9]+_([a-z0-9]+)=y$/\1/p')
+          fi
+        else
+          echo "::warning::$conf not found, falling back to the source tree default config"
+        fi
+        {
+          echo "TARGET_BOARD=$board"
+          echo "TARGET_SUBTARGET=$sub"
+          echo "TARGET_ID=${board:-unknown}${sub:+-$sub}"
+        } >> "$GITHUB_ENV"
+        echo "target = ${board:-?}/${sub:-?}"
+
+    - name: Clone source code
+      run: |
+        # branch=latest -> resolve the newest openwrt-YY.MM stable branch
+        if [ "$REPO_BRANCH" = "latest" ]; then
+          b=$(git ls-remote --heads "$REPO_URL" 'openwrt-*' \
+              | sed 's#.*refs/heads/##' \
+              | grep -E '^openwrt-[0-9]{2}\.[0-9]{2}$' | sort -V | tail -n1)
+          [ -n "$b" ] || { echo "::error::cannot resolve the newest stable branch from $REPO_URL"; exit 1; }
+          echo "::notice::branch latest -> $b"
+          REPO_BRANCH="$b"
+          echo "REPO_BRANCH=$b" >> "$GITHUB_ENV"
+        fi
+        mkdir -p "$BUILD_ROOT"
+        ln -snf "$BUILD_ROOT" "$GITHUB_WORKSPACE/openwrt"
+        df -hT /mnt
+        git clone --depth=1 --single-branch -b "$REPO_BRANCH" "$REPO_URL" "$BUILD_ROOT"
+        git -C "$BUILD_ROOT" log -1 --oneline
+
+    # tools/llvm-bpf is the largest single piece of the host toolchain, and
+    # upstream ships a prebuilt copy of the same version in every target's
+    # download directory.
+    #
+    # Ordering is a hard constraint: HAS_PREBUILT_LLVM_TOOLCHAIN, which gates
+    # the BPF_TOOLCHAIN_PREBUILT selected in .config, is a def_bool over a shell
+    # test for llvm-bpf/.llvm-version, evaluated when kconfig parses. So the
+    # tarball has to land in the source tree root before the first make.
+    #
+    # The version is read from the tree's own PKG_VERSION, never hardcoded, so
+    # what is fetched is exactly the build this tree would have produced. A miss
+    # fails hard rather than falling back to a source build: the fallback works
+    # but only makes the build silently much slower, and "slower" is the least
+    # noticeable failure signal there is. During the window between an upstream
+    # LLVM bump and the buildbot publishing the matching tarball, wait it out or
+    # temporarily set BPF_TOOLCHAIN_BUILD_LLVM in .config.
+    - name: Fetch prebuilt LLVM-BPF toolchain
+      run: |
+        cd openwrt
+        ver=$(sed -nE 's/^PKG_VERSION:=[[:space:]]*(.+)$/\1/p' tools/llvm-bpf/Makefile | head -n1)
+        [ -n "$ver" ] || { echo "::error::cannot read PKG_VERSION from tools/llvm-bpf"; exit 1; }
+        name="llvm-bpf-${ver}.$(uname -s)-$(uname -m).tar.zst"   # see LLVM_BPF_PREFIX
+        for base in https://downloads.immortalwrt.org https://downloads.openwrt.org; do
+          dir="$base/snapshots/targets/$TARGET_BOARD/$TARGET_SUBTARGET"
+          rm -rf "/tmp/$name" /tmp/llvm-sums /tmp/llvm-sum llvm-bpf "llvm-bpf-${ver}."*
+          curl -fsSL --connect-timeout 15 -m 900 -o "/tmp/$name" "$dir/$name" || continue
+          # The checksum travels the same path, so it catches truncation and
+          # wrong files but not tampering. The trust boundary is https plus
+          # these two hosts.
+          curl -fsSL --connect-timeout 15 -m 120 -o /tmp/llvm-sums "$dir/sha256sums" || continue
+          grep -F -- " *$name" /tmp/llvm-sums > /tmp/llvm-sum || continue
+          (cd /tmp && sha256sum -c llvm-sum) || { echo "::warning::checksum mismatch for $name from $base"; continue; }
+          tar --zstd -xf "/tmp/$name" -C . || continue
+          if [ -f llvm-bpf/.llvm-version ]; then
+            echo "::notice::prebuilt LLVM-BPF $ver from $base"
+            rm -f "/tmp/$name"
+            exit 0
+          fi
+        done
+        echo "::error::$name is unavailable from both mirrors. Upstream most likely just bumped LLVM to $ver and the buildbots have not published it yet; wait for the publish, or set CONFIG_BPF_TOOLCHAIN_BUILD_LLVM back in .config"
+        exit 1
+
+    # Key on the content hash of tools/ + toolchain/, not on
+    # `git log -n1 tools toolchain`: in a shallow clone that always returns
+    # HEAD, so any upstream commit would invalidate the toolchain cache. A
+    # content hash changes only when the toolchain sources do, and is stable
+    # across branches, rebases and forks.
+    - name: Compute cache keys
+      run: |
+        cd openwrt
+        tc=$( {
+                find tools toolchain -type f -print0 | sort -z | xargs -0 sha256sum
+                # Config that affects toolchain output belongs in the key too,
+                # or a gcc/libc change reuses the wrong cache
+                grep -hE '^CONFIG_(TARGET_(BOARD|SUBTARGET|ARCH_PACKAGES)=|LIBC|GCC_|BINUTILS_|TOOLCHAIN_|USE_MUSL|USE_GLIBC|BPF_TOOLCHAIN_|USE_LLVM_)' \
+                  "$GITHUB_WORKSPACE/$BUILD_CONFIG" 2>/dev/null || true
+              } | sha256sum | cut -c1-16 )
+        cfg=$(sha256sum "$GITHUB_WORKSPACE/$BUILD_CONFIG" 2>/dev/null | cut -c1-16)
+        [ -n "$cfg" ] || cfg=noconfig
+        # nocache=true suffixes the key so it must miss, while still saving a
+        # fresh cache.
+        if [ "$NOCACHE" = "true" ]; then tc="${tc}-r${GITHUB_RUN_ID}"; cfg="${cfg}-r${GITHUB_RUN_ID}"; fi
+        # dl's restore-keys has to expire along with nocache. Hardcoded to
+        # dl-<target>-, a missed exact key falls straight back to the newest dl
+        # cache, making nocache a no-op for dl. toolchain has no restore-keys
+        # and ccache's prefix already carries the run id, so neither is affected.
+        dl_restore="dl-${TARGET_ID}-"
+        [ "$NOCACHE" = "true" ] && dl_restore=""
+        {
+          echo "TC_KEY=toolchain-${TARGET_ID}-${tc}"
+          echo "CC_KEY=ccache-${TARGET_ID}-${tc}"
+          echo "DL_KEY=dl-${TARGET_ID}-${cfg}"
+          echo "DL_RESTORE=${dl_restore}"
+        } >> "$GITHUB_ENV"
+        echo "toolchain key = toolchain-${TARGET_ID}-${tc}"
+
+    - name: Cache toolchain
+      id: tc-cache
+      uses: actions/cache@main
+      with:
+        path: |
+          openwrt/staging_dir/host*
+          openwrt/staging_dir/tool*
+        key: ${{ env.TC_KEY }}      # no restore-keys: skip the rebuild only on an exact content match
+
+    - name: Cache ccache
+      uses: actions/cache@main
+      with:
+        path: openwrt/.ccache
+        key: ${{ env.CC_KEY }}-${{ github.run_id }}
+        restore-keys: ${{ env.CC_KEY }}-
+
+    - name: Cache dl
+      uses: actions/cache@main
+      with:
+        # dl holds only PKG_HASH-verified tarballs -- after-installing-feed.sh
+        # moves the Go module cache out to build_dir/ -- so a prefix fallback is
+        # safe here.
+        path: openwrt/dl
+        key: ${{ env.DL_KEY }}
+        restore-keys: ${{ env.DL_RESTORE }}
+
+    # On a cache hit, strip the toolchain stamp dependencies out of the
+    # top-level Makefile so make does not rebuild the toolchain.
+    - name: Skip toolchain rebuild
+      if: steps.tc-cache.outputs.cache-hit == 'true'
+      run: |
+        cd openwrt
+        if ! ls -d staging_dir/toolchain-* >/dev/null 2>&1; then
+          echo "::warning::cache hit but staging_dir/toolchain-* is missing, rebuilding the toolchain anyway"
+          exit 0
+        fi
+        # shellcheck disable=SC2016 # $( ) here is a literal Makefile token, not shell expansion
+        sed -i 's/ $(tool.*\/stamp-compile)//;' Makefile
+        # shellcheck disable=SC2016
+        sed -i 's/ $(tool.*\/stamp-install)//;' Makefile
+        echo "toolchain restored, rebuild skipped"
+
+    - name: Load custom feeds
+      run: |
+        [ -e "$FEEDS_CONF" ] && mv "$FEEDS_CONF" openwrt/feeds.conf.default
+        [ -f "$BEFORE_FEED_SH" ] || { echo "::error::$BEFORE_FEED_SH is missing"; exit 1; }
+        chmod +x "$BEFORE_FEED_SH"
+        cd openwrt && "$GITHUB_WORKSPACE/$BEFORE_FEED_SH"
+
+    - name: Update feeds
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      run: cd openwrt && ./scripts/feeds install -a -f
+
+    - name: Load custom configuration
+      run: |
+        [ -e files ] && mv files openwrt/files
+        [ -e "$BUILD_CONFIG" ] && mv "$BUILD_CONFIG" openwrt/.config
+        if [ -e "$KERNEL_CONFIG" ]; then
+          if [ -z "$TARGET_BOARD" ] || [ ! -d "openwrt/target/linux/$TARGET_BOARD" ]; then
+            echo "::error::target/linux/$TARGET_BOARD does not exist, nowhere to put the kernel config"; exit 1
+          fi
+          # Kernel version is not hardcoded: read KERNEL_PATCHVER out of the
+          # source tree, subtarget first
+          kver=""
+          for mk in "openwrt/target/linux/$TARGET_BOARD/$TARGET_SUBTARGET/Makefile" \
+                    "openwrt/target/linux/$TARGET_BOARD/Makefile"; do
+            [ -f "$mk" ] || continue
+            v=$(sed -nE 's/^KERNEL_PATCHVER[[:space:]]*[:?+]?=[[:space:]]*([0-9.]+).*$/\1/p' "$mk" | head -n1)
+            if [ -n "$v" ]; then kver="$v"; break; fi
+          done
+          dst="$KERNEL_CONFIG"
+          if [ -n "$kver" ]; then
+            dst="config-$kver"
+            if [ "$dst" != "$KERNEL_CONFIG" ]; then
+              echo "::warning::source kernel is $kver, applying $KERNEL_CONFIG as $dst -- review the kernel symbols"
+            fi
+          fi
+          # Must land in the subtarget directory. Kernel configs merge in the
+          # order generic -> board -> subtarget and the last file wins
+          # unconditionally (kconfig.pl's '+' is a plain assignment), so at
+          # board level every symbol the upstream subtarget file also sets
+          # silently overrides this one.
+          dstdir="openwrt/target/linux/$TARGET_BOARD"
+          [ -n "$TARGET_SUBTARGET" ] && [ -d "$dstdir/$TARGET_SUBTARGET" ] \
+            && dstdir="$dstdir/$TARGET_SUBTARGET"
+          mv "$KERNEL_CONFIG" "$dstdir/$dst"
+          echo "kernel config -> ${dstdir#openwrt/}/$dst"
+        fi
+        [ -f "$AFTER_FEED_SH" ] || { echo "::error::$AFTER_FEED_SH is missing"; exit 1; }
+        chmod +x "$AFTER_FEED_SH"
+        cd openwrt && "$GITHUB_WORKSPACE/$AFTER_FEED_SH"
+
+    - name: Set variables
+      run: |
+        {
+          echo "BUILD_TIME=$(date +"%Y%m%d%H%M")"
+          echo "BUILD_NUMBER=$(git rev-parse --short HEAD)"
+          echo "SOURCE_REV=$(git -C openwrt rev-parse --short HEAD)"
+        } >> "$GITHUB_ENV"
+        cd openwrt
+        name=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' | head -n1)
+        # Fall back to the profile, then the subtarget, when there is no
+        # DEVICE_ entry, so the step does not exit 1
+        [ -n "$name" ] || name=$(sed -nE 's/^CONFIG_TARGET_PROFILE="DEVICE_(.*)"$/\1/p' .config | head -n1)
+        [ -n "$name" ] || name="${TARGET_SUBTARGET:-generic}"
+        echo "DEVICE_NAME=$name" >> "$GITHUB_ENV"
+        echo "device = $name"
+
+    # Ship a uci-defaults script instead of sed-ing
+    # package/emortal/default-settings: that package exists only in ImmortalWrt
+    # and is absent from official OpenWrt and other forks.
+    - name: Generate Easy Update hooks
+      run: |
+        mkdir -p openwrt/files/etc/uci-defaults
+        cat > openwrt/files/etc/uci-defaults/99z-easyupdate <<EOF
+        sed -i '/^DISTRIB_GITHUB=/d;/^DISTRIB_VERSIONS=/d' /etc/openwrt_release
+        cat >> /etc/openwrt_release <<'REL'
+        DISTRIB_GITHUB='${{ github.server_url }}/${{ github.repository }}'
+        DISTRIB_VERSIONS='${BUILD_TIME}_${BUILD_NUMBER}'
+        REL
+        exit 0
+        EOF
+        cat openwrt/files/etc/uci-defaults/99z-easyupdate
+        if [ -f openwrt/files/usr/bin/easyupdate.sh ]; then
+          chmod +x openwrt/files/usr/bin/easyupdate.sh
+        else
+          echo "::warning::files/usr/bin/easyupdate.sh does not exist, skipping chmod"
+        fi
+
+    - name: SSH connection to Actions
+      uses: owenthereal/action-upterm@main
+      if: env.SSH == 'true'
+      with:
+        wait-timeout-minutes: 15
+
+    - name: Set build user permissions
+      run: |
+        mkdir -p /mnt/buildhome "$BUILD_ROOT/.ccache"
+        # Cap ccache so its entries cannot grow without bound and evict
+        # everything else from the repository's 10 GB cache quota
+        printf 'max_size = 2.0G\ncompression = true\n' > "$BUILD_ROOT/.ccache/ccache.conf"
+        chown -R buildbot:buildbot "$BUILD_ROOT" /mnt/buildhome
+
+    - name: Download package
+      id: package
+      run: |
+        # su -m keeps HOME=/root, which buildbot cannot write, breaking the
+        # go/npm/cargo caches. Set a writable HOME explicitly.
+        # shellcheck disable=SC2016 # single quotes are intentional: expand inside the su subshell, not here
+        su -m buildbot -c 'export HOME=/mnt/buildhome; cd "$GITHUB_WORKSPACE/openwrt" && make defconfig && make download -j$(($(nproc)*4))'
+        cd openwrt
+        # Drop truncated downloads and fetch again, rather than deferring the
+        # failure to the compile stage.
+        # Not `find ... | grep -q`: grep exits early and SIGPIPEs find before it
+        # has finished deleting.
+        truncated=$(find dl -type f -size -1024c -print -delete 2>/dev/null || true)
+        if [ -n "$truncated" ]; then
+          echo "removed truncated downloads:"; echo "$truncated"
+          # shellcheck disable=SC2016 # single quotes are intentional: expand inside the su subshell, not here
+          su -m buildbot -c 'export HOME=/mnt/buildhome; cd "$GITHUB_WORKSPACE/openwrt" && make download -j$(($(nproc)*4))'
+        fi
+
+    # Full parallelism is safe: tools/libtool failures here come from a RELEASE
+    # environment variable poisoning autoconf's version (see CLAUDE.md), not
+    # from -j, so lowering it only wastes time. No retry either -- a failure is
+    # a failure, re-run the whole job.
+    - name: Build host tools
+      # Skipped on a cache hit. "Skip toolchain rebuild" above removes the
+      # tools stamp dependencies from the top-level Makefile, but that does
+      # nothing for a target named explicitly on the command line, so running
+      # tools/install anyway makes the cache worthless. It is a separate step
+      # only to keep host-tool failures apart from package failures in the log.
+      if: steps.tc-cache.outputs.cache-hit != 'true'
+      run: |
+        # shellcheck disable=SC2016 # single quotes are intentional: expand inside the su subshell, not here
+        su -m buildbot -c '
+          export HOME=/mnt/buildhome
+          # Generic names like RELEASE/VERSION left in the environment get
+          # imported as make variables by the GNUmakefile -> maint.mk that
+          # autoconf ships, where ifdef RELEASE overwrites VERSION with
+          # $(word 1,$(RELEASE)). Workflow variables are renamed to avoid this;
+          # unsetting them here is the second layer.
+          unset RELEASE VERSION PACKAGE PREFIX
+          cd "$GITHUB_WORKSPACE/openwrt"
+          make -j$(nproc) tools/install
+        '
+
+    - name: Compile the firmware
+      id: compile
+      run: |
+        echo "$(nproc) thread compile"
+        # No serial retry: a second make inherits the same broken tree and
+        # yields no new information. Per-package logs come from
+        # CONFIG_BUILD_LOG=y under openwrt/logs/, collected by "Upload build
+        # logs" below.
+        # shellcheck disable=SC2016 # single quotes are intentional: expand inside the su subshell, not here
+        su -m buildbot -c '
+          export HOME=/mnt/buildhome
+          unset RELEASE VERSION PACKAGE PREFIX
+          cd "$GITHUB_WORKSPACE/openwrt"
+          make -j$(nproc)
+        '
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Upload build logs
+      uses: actions/upload-artifact@main
+      if: failure() && steps.compile.conclusion == 'failure'
+      with:
+        name: build-logs_${{ env.TARGET_ID }}
+        path: |
+          openwrt/logs
+          openwrt/.config
+        retention-days: 7
+        if-no-files-found: ignore
+
+    - name: Check space usage
+      if: (!cancelled())
+      run: |
+        df -hT
+        du -sh "$BUILD_ROOT/.ccache" "$BUILD_ROOT/dl" 2>/dev/null || true
+
+    - name: Upload bin directory
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.KEEP_BINDIR == 'true' && !cancelled()
+      with:
+        name: ${{ env.FIRMWARE_NAME }}_bin_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        path: openwrt/bin
+        compression-level: 0      # contents are already gz/zst; recompressing burns CPU for nothing
+        retention-days: 30
+
+    # Two lines of tar; not worth pulling in a third-party action
+    - name: Package extra archives
+      id: extra
+      if: steps.compile.outputs.status == 'success' && env.KEEP_BINDIR == 'true' && !cancelled()
+      run: |
+        cd openwrt/bin
+        tgt=$(find targets -mindepth 2 -maxdepth 2 -type d 2>/dev/null | head -n1)
+        [ -n "$tgt" ] || { echo "::warning::cannot find the targets output directory"; exit 0; }
+        suffix="${DEVICE_NAME}_${BUILD_TIME}_${BUILD_NUMBER}.tar.gz"
+        if [ -d "$tgt/packages" ]; then
+          tar -czf "$tgt/${FIRMWARE_NAME}_kernel-packages_${suffix}" -C "$tgt" packages
+        fi
+        if [ -d packages ]; then
+          tar -czf "$tgt/${FIRMWARE_NAME}_packages_${suffix}" packages
+        fi
+        ls -lh "$tgt"
+
+    - name: Organize files
+      id: organize
+      if: steps.compile.outputs.status == 'success' && (env.ARTIFACT == 'true' || env.DO_RELEASE == 'true') && !cancelled()
+      run: |
+        cd openwrt/bin/targets/*/*
+        rm -rf packages
+        echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
+        echo "status=success" >> "$GITHUB_OUTPUT"
+
+    - name: Upload firmware directory to artifact
+      uses: actions/upload-artifact@main
+      if: steps.organize.outputs.status == 'success' && env.ARTIFACT == 'true' && !cancelled()
+      with:
+        name: ${{ env.FIRMWARE_NAME }}_firmware_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        path: ${{ env.FIRMWARE }}
+        compression-level: 0
+        retention-days: 30
+
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@master
+      if: steps.organize.outputs.status == 'success' && env.DO_RELEASE == 'true' && !cancelled()
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        files: ${{ env.FIRMWARE }}/*
+        name: ${{ env.FIRMWARE_NAME }} ${{ env.DEVICE_NAME }}
+        tag_name: ${{ env.FIRMWARE_NAME }}_${{ env.DEVICE_NAME }}_${{ env.BUILD_TIME }}_${{ env.BUILD_NUMBER }}
+        body: |
+          - Target: `${{ env.TARGET_ID }}` / `${{ env.DEVICE_NAME }}`
+          - Source: ${{ env.REPO_URL }} @ `${{ env.REPO_BRANCH }}` (`${{ env.SOURCE_REV }}`)
+          - Config: ${{ github.repository }}@`${{ env.BUILD_NUMBER }}`

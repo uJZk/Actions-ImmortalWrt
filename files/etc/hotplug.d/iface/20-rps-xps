@@ -1,0 +1,8 @@
+#!/bin/sh
+# Arm again after netifd brings the interface up. The net hotplug hook alone is
+# not enough: XPS written at registration time does not stick, and the physical
+# NICs' xps_cpus read back 0 after boot. ifup happens later and reliably closes
+# that gap. The script is idempotent, so arming twice is harmless.
+[ "$ACTION" = "ifup" ] || exit 0
+[ -x /usr/libexec/arm-xps-flowlimit ] || exit 0
+exec /usr/libexec/arm-xps-flowlimit

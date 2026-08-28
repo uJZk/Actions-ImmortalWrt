@@ -1,0 +1,86 @@
+#!/bin/sh
+# Supplies the two things podman cannot do without systemd on OpenWrt:
+#
+#   - --health-interval schedules probes through systemd transient timers, so
+#     nothing ever fires them here. --health-cmd stays configured but never
+#     runs, and the health column of `podman ps` freezes on the last result --
+#     it reads as live status but is a snapshot. `watchdog` runs the probes.
+#
+#   - `podman auto-update` only touches containers carrying the
+#     PODMAN_SYSTEMD_UNIT label a quadlet writes, so it is unusable here.
+#     `update` reimplements it by comparing image ids.
+#
+# Boot autostart is not this script's business: it belongs to the
+# /etc/init.d/container-<name> procd services luci-app-podman generates.
+# watchdog only restarts containers that are running but unhealthy, never
+# starts a stopped one, so the two never fight.
+set -u
+LOG_TAG=podman-stack
+DEFS_DIR=/etc/podman-stack.d
+
+log() { logger -t "$LOG_TAG" "$*"; }
+have_podman() { [ -x /usr/bin/podman ] || exit 0; }
+
+# Only containers with a health probe are eligible: `healthcheck run` always
+# fails on one without a probe, and that must not read as unhealthy.
+cmd_watchdog() {
+	have_podman
+	# Collect the names first rather than piping into `while read`:
+	# `podman healthcheck run` consumes the rest of the loop's stdin, so only
+	# the first container gets checked and the others silently stay in
+	# starting. Container names contain no spaces, so the unquoted for is safe.
+	names="$(podman ps --format '{{.Names}}' 2>/dev/null)"
+	for n in $names; do
+		podman inspect -f '{{if .Config.Healthcheck}}yes{{end}}' "$n" 2>/dev/null | grep -q yes || continue
+		podman healthcheck run "$n" >/dev/null 2>&1 </dev/null && continue
+		[ "$(podman inspect -f '{{.State.Health.Status}}' "$n" 2>/dev/null)" = unhealthy ] || continue
+		log "$n: unhealthy, restarting"
+		podman restart "$n" >/dev/null 2>&1 </dev/null || log "$n: restart FAILED"
+	done
+}
+
+# Reads each $DEFS_DIR/*.conf, which supplies NAME, IMAGE and a create().
+# The directory ships empty, so this command is inert by default.
+cmd_update() {
+	have_podman
+	[ -d "$DEFS_DIR" ] || return 0
+	for def in "$DEFS_DIR"/*.conf; do
+		[ -f "$def" ] || continue
+		( # Subshell: definitions must not leak into each other
+		NAME=; IMAGE=
+		# shellcheck disable=SC1090
+		. "$def"
+		[ -n "$NAME" ] && [ -n "$IMAGE" ] || { log "${def##*/}: NAME or IMAGE is missing"; exit 0; }
+		command -v create >/dev/null 2>&1 || { log "$NAME: the definition has no create()"; exit 0; }
+		podman container exists "$NAME" 2>/dev/null || { log "$NAME: container does not exist, skipping"; exit 0; }
+
+		before="$(podman inspect -f '{{.Image}}' "$NAME" 2>/dev/null)"
+		# Record whether it was running and restore that state below, or an
+		# image update starts a container someone deliberately stopped.
+		running="$(podman inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)"
+
+		podman pull -q "$IMAGE" >/dev/null 2>&1 || { log "$NAME: pull failed, keeping the current image"; exit 0; }
+		after="$(podman image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null)"
+		[ -n "$after" ] || { log "$NAME: cannot read the new image id"; exit 0; }
+		[ "$before" != "$after" ] || exit 0
+
+		log "$NAME: image updated, recreating"
+		podman rm -f "$NAME" >/dev/null 2>&1
+		create >/dev/null 2>&1 || { log "$NAME: recreate failed"; exit 0; }
+		if [ "$running" = true ]; then
+			podman start "$NAME" >/dev/null 2>&1 &&
+				log "$NAME: recreated and started" || log "$NAME: failed to start"
+		else
+			log "$NAME: recreated, left stopped (it was not running)"
+		fi
+		)
+	done
+	# Removes only the untagged images the pulls above left behind
+	podman image prune -f >/dev/null 2>&1
+}
+
+case "${1:-}" in
+watchdog) cmd_watchdog ;;
+update)   cmd_update ;;
+*) echo "usage: ${0##*/} {watchdog|update}" >&2; exit 1 ;;
+esac

@@ -1,0 +1,88 @@
+# Factory defaults. /etc/config/unbound is a conffile of unbound-daemon and
+# sysupgrade keeps the copy already on the router, so what is written here only
+# applies to a fresh flash. Change the live upstream on the device; editing this
+# file does not reach deployed routers.
+
+config unbound 'ub_main'
+	option enabled '1'
+	option manual_conf '0'
+
+	# Serve the LAN only; do not expose the resolver on WAN.
+	option localservice '1'
+	option interface_auto '1'
+	option listen_port '53'
+
+	# Wire unbound to odhcpd: the package's own /usr/lib/unbound/odhcpd.sh
+	# turns leases into zone-data:/local-data: entries. The default is none,
+	# which leaves DNS working while every LAN hostname stops resolving, with
+	# no error anywhere. The other half is
+	# /etc/uci-defaults/91-unbound-odhcpd (dhcp.@odhcpd[0].leasetrigger).
+	option dhcp_link 'odhcpd'
+	# internal rather than OpenWrt's default lan: many clients and resolver
+	# libraries special-case lan., and moving off it is what lets
+	# 94-unbound-private-tld NXDOMAIN that TLD wholesale. This value must match
+	# dhcp.lan.domain, set in 93-router-defaults.
+	option domain 'internal'
+	option domain_type 'static'
+	option add_local_fqdn '1'
+	option add_wan_fqdn '0'
+
+	# The upstream is a plain UDP 53 resolver with no DNSSEC; enabling the
+	# validator only turns a large share of domains into SERVFAIL.
+	option validator '0'
+	option validator_ntp '1'
+
+	option rebind_protection '1'
+	option rebind_localhost '0'
+	option edns_size '1232'
+	# No TTL floor. Raising the TTL pins clients to a CDN node that may no
+	# longer be the best one, or may be gone; honour whatever upstream sends.
+	option ttl_min '0'
+	option num_threads '1'
+	# Deliberately not ip4_only: that emits do-ip6: no and unbound then listens
+	# on 0.0.0.0 only, while odhcpd's RA still advertises the router's IPv6
+	# address as RDNSS. Queries to that address all time out -- dual-stack
+	# clients merely get slower, IPv6-only clients lose DNS entirely, and
+	# nothing logs an error.
+	option protocol 'default'
+	# passive: no prefetch and no cache refresh. Against a single fixed
+	# forwarder prefetching just re-sends the same query early, adding traffic
+	# on a weak link for nothing.
+	option recursion 'passive'
+	# large: this board has memory to spare, so use a bigger cache.
+	option resource 'large'
+	option verbosity '1'
+
+	# With a plain UDP 53 forwarder, minimisation only affects the root and TLD
+	# hops, so it costs little.
+	option query_minimize '1'
+	# Do not cache negative answers: upstream SOA TTLs are often absurdly long
+	# and would keep a freshly created domain unresolvable for hours.
+	option ttl_neg_max '0'
+
+	# 1 = local-only, unencrypted remote-control (control-use-cert: no).
+	# luci-app-unbound's status page calls /usr/sbin/unbound-control and is
+	# blank without it. 1 rather than 2/3 avoids needing unbound-control-setup
+	# and openssl-util.
+	option unbound_control '1'
+
+	list iface_trig 'lan'
+	list iface_trig 'wan'
+	list iface_wan 'wan'
+
+config zone 'fwd_isp'
+	# Fixed forwarder, not the ISP-supplied one (resolv_conf '0'). Whether the
+	# uplink is DHCP or PPPoE decides if resolv.conf.auto holds anything at
+	# all, so following it makes the two access types behave differently, and
+	# many ISP resolvers rewrite answers. To follow the ISP instead, set
+	# resolv_conf back to '1' and drop the server below.
+	#
+	# fallback '0' -> forward-first: no. If the upstream is down, resolution
+	# fails outright instead of quietly switching to recursion from the root;
+	# the two give very different answers here, so failing visibly is better.
+	option enabled '1'
+	option fallback '0'
+	option resolv_conf '0'
+	option zone_type 'forward_zone'
+	list zone_name '.'
+	list server '114.114.115.115'

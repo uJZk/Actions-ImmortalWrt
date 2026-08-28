@@ -1,0 +1,51 @@
+name: Lint
+
+on:
+  push:
+    paths:
+      - '.github/workflows/**'
+      - '**.sh'
+      - 'files/etc/hotplug.d/net/20-rps-xps'
+      - 'files/etc/hotplug.d/iface/20-rps-xps'
+      - 'files/etc/uci-defaults/*'
+      - 'files/usr/libexec/*'
+      - 'files/usr/bin/*'
+      - '.shellcheckrc'
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - '**.sh'
+      - 'files/etc/hotplug.d/net/20-rps-xps'
+      - 'files/etc/hotplug.d/iface/20-rps-xps'
+      - 'files/etc/uci-defaults/*'
+      - 'files/usr/libexec/*'
+      - 'files/usr/bin/*'
+      - '.shellcheckrc'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-slim
+    steps:
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Install linters
+      run: |
+        # ubuntu-slim may already run as root and may not ship sudo.
+        SUDO=
+        [ "$(id -u)" -eq 0 ] || SUDO=sudo
+        $SUDO apt-get update
+        $SUDO apt-get install -y curl shellcheck
+        curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest .
+
+    - name: actionlint
+      # actionlint extracts each `run:` block to a temp dir, so it never reads
+      # .shellcheckrc -- the same exclusions must be passed through this env var,
+      # kept in sync with the shellcheck step below.
+      env:
+        SHELLCHECK_OPTS: -e SC2086,SC2046,SC2206,SC2128,SC2178,SC2154
+      run: ./actionlint -color
+
+    - name: shellcheck
+      run: shellcheck -S warning before-installing-feed.sh after-installing-feed.sh files/usr/bin/easyupdate.sh files/etc/hotplug.d/net/20-rps-xps files/etc/hotplug.d/iface/20-rps-xps files/usr/libexec/arm-xps-flowlimit files/etc/uci-defaults/90-luci-theme files/etc/uci-defaults/91-unbound-odhcpd files/etc/uci-defaults/92-flowtable-no-wandev files/etc/uci-defaults/93-router-defaults files/etc/uci-defaults/94-unbound-private-tld files/etc/uci-defaults/95-apk-mirror files/usr/bin/podman-stack

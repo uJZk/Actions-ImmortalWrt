@@ -1,0 +1,5 @@
+# The package ships this disabled. With several single-hardware-queue NICs
+# (kmod-e1000, kmod-r8168) every one of them would otherwise park its IRQ on
+# CPU0, which is the same core RPS is trying to spread work off of.
+config irqbalance 'irqbalance'
+	option enabled '1'

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Arm once when the NIC registers. See /usr/libexec/arm-xps-flowlimit.
+[ "$ACTION" = "add" ] || exit 0
+[ -x /usr/libexec/arm-xps-flowlimit ] || exit 0
+exec /usr/libexec/arm-xps-flowlimit

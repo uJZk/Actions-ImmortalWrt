@@ -1,0 +1,29 @@
+#!/bin/sh
+# Point the apk feeds at a domestic mirror. The official host is roughly two
+# orders of magnitude slower from here -- slow enough that the first apk update
+# after a flash stalls.
+#
+# mirrors.ustc.edu.cn carries only immortalwrt's releases/, not snapshots/, and
+# this repo builds master (= snapshots), so it cannot be used. Before switching
+# mirrors, confirm the target serves
+# snapshots/targets/<board>/<subtarget>/packages/packages.adb.
+#
+# distfeeds.list is generated at build time and, as its own header says, is
+# overwritten by sysupgrade, so this rewrite has to run on every flash rather
+# than once. Only the host part is replaced; the path structure stays as-is.
+MIRROR="https://mirrors.pku.edu.cn/immortalwrt"
+F=/etc/apk/repositories.d/distfeeds.list
+
+[ -f "$F" ] || exit 0
+grep -q 'downloads\.immortalwrt\.org' "$F" || exit 0
+
+sed -i "s|https://downloads\.immortalwrt\.org|$MIRROR|g" "$F"
+
+# LuCI's system settings page displays this value; leaving it stale makes the
+# UI disagree with the feed actually in use.
+[ -n "$(uci -q get system.@imm_init[0])" ] && {
+	uci set system.@imm_init[0].apk_mirror="$MIRROR"
+	uci commit system
+}
+
+exit 0

@@ -1,0 +1,1 @@
+# 44 4 * * 4 /usr/bin/easyupdate.sh -u # Easy Update Script

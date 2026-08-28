@@ -1,0 +1,31 @@
+#!/bin/sh
+# This image has no dnsmasq: DHCP comes from the full odhcpd and LAN name
+# resolution from unbound reading odhcpd's leases. Two settings join them, and
+# neither default is right here:
+#
+#   dhcp.@odhcpd[0].maindhcp        defaults to 0; at 0 odhcpd serves no DHCPv4
+#   dhcp.@odhcpd[0].leasetrigger    defaults to the dnsmasq notifier
+#
+# odhcpd's own 15_odhcpd derives maindhcp from whether /usr/sbin/dnsmasq exists
+# only on a genuine first install. Once sysupgrade has preserved
+# /etc/config/dhcp it takes its migration branch and exits early, so a box
+# upgraded from a dnsmasq-era image keeps maindhcp=0 and the whole LAN gets no
+# IPv4 address, with nothing in the log. The 91 prefix runs after 15_odhcpd.
+[ -x /usr/lib/unbound/odhcpd.sh ] || exit 0
+[ -n "$(uci -q get dhcp.@odhcpd[0])" ] || exit 0
+
+changed=0
+
+[ "$(uci -q get dhcp.@odhcpd[0].maindhcp)" = 1 ] || {
+	uci set dhcp.@odhcpd[0].maindhcp=1
+	changed=1
+}
+
+[ "$(uci -q get dhcp.@odhcpd[0].leasetrigger)" = /usr/lib/unbound/odhcpd.sh ] || {
+	uci set dhcp.@odhcpd[0].leasetrigger=/usr/lib/unbound/odhcpd.sh
+	changed=1
+}
+
+[ "$changed" = 1 ] && uci commit dhcp
+
+exit 0

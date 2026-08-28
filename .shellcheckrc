@@ -1,0 +1,4 @@
+# Word-splitting and array-expansion pedantry is disabled: the workflow `run:` blocks
+# are single-purpose CI snippets with controlled inputs, and the router-side scripts
+# use the flagged idioms deliberately. Error-severity findings stay on.
+disable=SC2086,SC2046,SC2206,SC2128,SC2178,SC2154
