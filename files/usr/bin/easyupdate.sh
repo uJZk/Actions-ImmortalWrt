@@ -6,7 +6,7 @@
 readonly LOG_MAIN='/tmp/easyupdatemain.log'
 readonly LOG_DL='/tmp/easyupdate.log'
 readonly LOG_FLASH='/tmp/easyupdate-flash.log'
-readonly REL_JSON="/tmp/easyupdate-release-$.json"
+readonly REL_JSON="/tmp/easyupdate-release-${BASHPID}.json"
 readonly LOCK_FILE='/var/lock/easyupdate.lock'
 readonly LOG_MAX=262144
 
