@@ -6,9 +6,13 @@
 readonly LOG_MAIN='/tmp/easyupdatemain.log'
 readonly LOG_DL='/tmp/easyupdate.log'
 readonly LOG_FLASH='/tmp/easyupdate-flash.log'
-readonly REL_JSON='/tmp/easyupdate-release.json'
+readonly REL_JSON="/tmp/easyupdate-release-${BASHPID}.json"
 readonly LOCK_FILE='/var/lock/easyupdate.lock'
 readonly LOG_MAX=262144
+
+# Reuse release metadata only within this invocation. A shared /tmp file can
+# make later runs compare against an outdated release indefinitely.
+trap 'rm -f "$REL_JSON"' EXIT
 
 # Release assets carry no version in their filename, so a stale image plus its
 # stale sha256sums verify against each other and flash as if current. Every
