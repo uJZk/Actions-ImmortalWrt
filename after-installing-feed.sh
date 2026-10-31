@@ -125,6 +125,10 @@ fi
 # router's own addresses on those ports is not hijacked.
 #
 # Return SNAT is elsewhere: files/usr/share/nftables.d/chain-post/srcnat/.
+python3 "$(dirname "$0")/scripts/patch-upnp-options.py" || {
+	echo "::error::failed to expose the miniupnpd STUN override"
+	exit 1
+}
 mu=feeds/packages/net/miniupnpd
 mn=$mu/files/nftables.d/chain-post/dstnat/20-miniupnpd.nft
 mu_guard='fib daddr type local ip daddr != 192.168.0.0/24 ip daddr != 100.64.0.0/10 jump upnp_prerouting'
@@ -168,3 +172,13 @@ PATCH
 		exit 1
 	}
 fi
+
+# STUN probes use an expiring fw4 input set instead of forwarding rules.
+# Copy into the package's source patches, applied after upstream feed patches.
+stun_patch="$(dirname "$0")/patches/110-stun-input.patch"
+[ -f "$mu/Makefile" ] && [ -f "$stun_patch" ] || {
+	echo "::error::miniupnpd feed or STUN input patch missing"
+	exit 1
+}
+mkdir -p "$mu/patches"
+cp "$stun_patch" "$mu/patches/110-stun-input.patch"

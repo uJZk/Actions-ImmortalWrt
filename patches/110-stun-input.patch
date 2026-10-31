@@ -1,0 +1,97 @@
+--- a/upnpstun.c
++++ b/upnpstun.c
+@@ -27,6 +27,7 @@
+ #include <syslog.h>
+ #include <string.h>
+ #include <errno.h>
++#include <sys/wait.h>
+ 
+ #include "config.h"
+ #include "upnputils.h"
+@@ -45,6 +46,39 @@
+ #include "ipfw/ipfwrdr.h"
+ #endif
+ 
++/* OpenWrt fw4 provides a timeout set dedicated to local STUN sockets.
++ * A timeout also closes the hole after a crash or forced termination. */
++#ifdef USE_NFTABLES
++static int
++stun_nft_element(const char *address, unsigned short port, int add)
++{
++	struct in_addr addr;
++	char element[96];
++	pid_t pid, result;
++	int status;
++
++	if (!address || inet_pton(AF_INET, address, &addr) != 1)
++		return -1;
++	snprintf(element, sizeof(element), add ? "{ %s . %hu timeout 60s }" :
++	         "{ %s . %hu }", address, port);
++	pid = fork();
++	if (pid < 0)
++		return -1;
++	if (pid == 0) {
++		execl("/usr/sbin/nft", "nft", add ? "add" : "delete", "element",
++		      "inet", "fw4", "upnp_stun_ports", element, (char *)NULL);
++		_exit(127);
++	}
++	do { result = waitpid(pid, &status, 0); } while (result < 0 && errno == EINTR);
++	if (result < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
++		syslog(LOG_ERR, "STUN: failed to %s temporary input port %hu",
++		       add ? "add" : "delete", port);
++		return -1;
++	}
++	return 0;
++}
++#endif
++
+ /*! \brief Generate random STUN Transaction Id
+  * \param[out] transaction_id */
+ static void generate_transaction_id(unsigned char transaction_id[12])
+@@ -510,6 +544,9 @@
+ 	int have_ext_addr;
+ 	int i, j;
+ 
++#ifdef USE_NFTABLES
++	(void)if_name;
++#endif
+ 	if (resolve_stun_host(stun_host, stun_port, &remote_addr) != 0)
+ 		return -1;
+ 
+@@ -538,12 +575,23 @@
+ 	       "perform_stun", local_ports[0], local_ports[1],
+ 	       local_ports[2], local_ports[3]);
+ 
+-	/* Unblock local ports */
++	/* Unblock local ports. Do not mistake a local firewall failure for
++	 * a restrictive upstream NAT. */
+ 	for (i = 0; i < 4; ++i) {
++#ifdef USE_NFTABLES
++		if (stun_nft_element(if_addr, local_ports[i], 1) < 0) {
++			for (j = 0; j < i; ++j)
++				stun_nft_element(if_addr, local_ports[j], 0);
++			for (j = 0; j < 4; ++j)
++				close(fds[j]);
++			return -1;
++		}
++#else
+ 		if (add_filter_rule2(if_name, NULL, if_addr, local_ports[i], local_ports[i], IPPROTO_UDP, "stun test") < 0) {
+ 			syslog(LOG_ERR, "%s: add_filter_rule2(..., %hu, ...) FAILED",
+ 			       "perform_stun", local_ports[i]);
+ 		}
++#endif
+ 	}
+ 
+ 	/* Send STUN requests and wait for responses */
+@@ -570,7 +618,11 @@
+ 
+ 	/* Remove unblock for local ports */
+ 	for (i = 0; i < 4; ++i) {
++#ifdef USE_NFTABLES
++		stun_nft_element(if_addr, local_ports[i], 0);
++#else
+ 		delete_filter_rule(if_name, local_ports[i], IPPROTO_UDP);
++#endif
+ 		close(fds[i]);
+ 	}
+ 

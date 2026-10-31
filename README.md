@@ -126,3 +126,18 @@ between flow offload, qosify and dae. Several of them fail silently.
 ## License
 
 [MIT](https://github.com/uJZk/Actions-ImmortalWrt/blob/main/LICENSE) © [**uJZk**](https://github.com/uJZk)
+
+### UPnP STUN and filtered NAT
+
+The nftables build uses a dedicated fw4 input set for miniupnpd's temporary
+STUN UDP sockets. Entries expire after 60 seconds even if the daemon crashes;
+normal port-forwarding rules are not used for input. Firewall reload during a
+probe can interrupt it; restart miniupnpd to retry. The STUN server must support
+RFC 5780 filtering tests.
+
+In LuCI's UPnP advanced settings, **Allow mappings when STUN detects filtering**
+is off by default and only takes effect with STUN enabled. It emits
+`ext_perform_stun=allow-filtered` instead of `yes`, allowing mapping requests
+even when the probe reports filtering. It does not create an upstream mapping or
+make an otherwise unreachable port reachable. Custom miniupnpd configuration
+files must set `ext_perform_stun` themselves.

@@ -1,0 +1,10 @@
+# Only miniupnpd's temporary local STUN sockets, never UPnP forwarding rules.
+set upnp_stun_ports {
+	type ipv4_addr . inet_service
+	flags timeout
+	timeout 60s
+}
+
+chain upnp_stun_input {
+	meta nfproto ipv4 ip daddr . udp dport @upnp_stun_ports accept
+}
