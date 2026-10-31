@@ -97,6 +97,10 @@ These break things silently and are not visible from the file you are editing:
   --version` and a BPF compilation before any expensive build. The stable tag
   moves between releases, so host toolchain cache keys include the actual OS,
   libc, libstdc++ and compiler package versions.
+- **VHDX images require host `qemu-img`.** The slim job container installs
+  `qemu-utils` and checks `qemu-img` before building; the target firmware's
+  optional `CONFIG_PACKAGE_qemu-img` is unrelated. Without the host tool,
+  image generation fails after compilation.
 - **"Build host tools" is gated on the toolchain cache *missing*, and has to be.** "Skip
   toolchain rebuild" strips the tools stamp *dependencies* out of the top-level `Makefile`,
   which stops `make world` rebuilding them but does nothing about a target named on the

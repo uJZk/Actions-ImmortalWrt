@@ -161,7 +161,10 @@ jobs:
           python3-venv python3-pyelftools rsync swig unzip zlib1g-dev \
           file wget curl ca-certificates subversion xz-utils zstd ccache \
           cmake ninja-build libelf-dev libxml-parser-perl pkgconf patch \
-          bc cpio time zip jq erofs-utils tzdata
+          bc cpio time zip jq erofs-utils qemu-utils tzdata
+        # VHDX images are enabled in .config; fail before compilation if the
+        # host-side converter is unavailable.
+        command -v qemu-img >/dev/null || { echo '::error::qemu-img is required for VHDX images'; exit 1; }
         if [ "$SSH" = "true" ]; then apt-get install -y -qq tmux; fi
         id buildbot >/dev/null 2>&1 || useradd -m -s /bin/bash buildbot
         ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime
