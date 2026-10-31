@@ -92,10 +92,11 @@ These break things silently and are not visible from the file you are editing:
   there is. Two hosts are tried, since their buildbots publish on different schedules, and
   only under `snapshots/`, so a release branch pinning a different LLVM fails here instead
   of silently building one; during an upstream bump, wait for the publish or temporarily
-  set `CONFIG_BPF_TOOLCHAIN_BUILD_LLVM` back. The Debian 13 slim job container
-  supplies the newer host glibc/libstdc++ needed by current prebuilt LLVM; the
-  fetch step checks both `clang --version` and a BPF compilation before any
-  expensive build. Host toolchain cache keys include the container baseline.
+  set `CONFIG_BPF_TOOLCHAIN_BUILD_LLVM` back. The Debian stable-slim job
+  container supplies the host runtime; the fetch step checks both `clang
+  --version` and a BPF compilation before any expensive build. The stable tag
+  moves between releases, so host toolchain cache keys include the actual OS,
+  libc, libstdc++ and compiler package versions.
 - **"Build host tools" is gated on the toolchain cache *missing*, and has to be.** "Skip
   toolchain rebuild" strips the tools stamp *dependencies* out of the top-level `Makefile`,
   which stops `make world` rebuilding them but does nothing about a target named on the

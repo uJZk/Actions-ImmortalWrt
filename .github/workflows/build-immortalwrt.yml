@@ -96,7 +96,7 @@ jobs:
     container:
       # The prebuilt LLVM-BPF requires at least glibc 2.36; the old
       # buildworker image has an older runtime and cannot execute it.
-      image: debian:13-slim
+      image: debian:stable-slim
       volumes:
         - /mnt:/mnt
 
@@ -335,8 +335,10 @@ jobs:
       run: |
         cd openwrt
         tc=$( {
-                # Host tools in this cache depend on the container runtime.
-                printf '%s\n' 'debian-13-slim'
+                # stable can change release; cached host tools depend on the
+                # actual runtime and compiler, not just the image tag.
+                cat /etc/os-release
+                dpkg-query -W -f='${Package}=${Version}\n' libc6 libstdc++6 gcc g++ clang
                 find tools toolchain -type f -print0 | sort -z | xargs -0 sha256sum
                 # Config that affects toolchain output belongs in the key too,
                 # or a gcc/libc change reuses the wrong cache
