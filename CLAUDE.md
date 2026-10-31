@@ -92,7 +92,7 @@ These break things silently and are not visible from the file you are editing:
   there is. Two hosts are tried, since their buildbots publish on different schedules, and
   only under `snapshots/`, so a release branch pinning a different LLVM fails here instead
   of silently building one; during an upstream bump, wait for the publish or temporarily
-  set `CONFIG_BPF_TOOLCHAIN_BUILD_LLVM` back. The Ubuntu 24.04 job container
+  set `CONFIG_BPF_TOOLCHAIN_BUILD_LLVM` back. The Debian 13 slim job container
   supplies the newer host glibc/libstdc++ needed by current prebuilt LLVM; the
   fetch step checks both `clang --version` and a BPF compilation before any
   expensive build. Host toolchain cache keys include the container baseline.

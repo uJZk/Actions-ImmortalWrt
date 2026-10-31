@@ -96,7 +96,7 @@ jobs:
     container:
       # The prebuilt LLVM-BPF requires at least glibc 2.36; the old
       # buildworker image has an older runtime and cannot execute it.
-      image: ubuntu:24.04
+      image: debian:13-slim
       volumes:
         - /mnt:/mnt
 
@@ -336,7 +336,7 @@ jobs:
         cd openwrt
         tc=$( {
                 # Host tools in this cache depend on the container runtime.
-                printf '%s\n' 'ubuntu-24.04'
+                printf '%s\n' 'debian-13-slim'
                 find tools toolchain -type f -print0 | sort -z | xargs -0 sha256sum
                 # Config that affects toolchain output belongs in the key too,
                 # or a gcc/libc change reuses the wrong cache
