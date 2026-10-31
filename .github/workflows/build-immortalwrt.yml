@@ -94,10 +94,9 @@ jobs:
       contents: write          # required by softprops/action-gh-release
       actions: write           # cancel this run and re-dispatch when not on AMD
     container:
-      # No tag, so this resolves to :latest and floats. The v3.11.8 is the
-      # buildbot framework version and part of the image name itself -- upstream
-      # publishes no alias to point at instead.
-      image: ghcr.io/openwrt/buildbot/buildworker-v3.11.8
+      # The prebuilt LLVM-BPF requires at least glibc 2.36; the old
+      # buildworker image has an older runtime and cannot execute it.
+      image: ubuntu:24.04
       volumes:
         - /mnt:/mnt
 
@@ -150,6 +149,23 @@ jobs:
           echo "KEEP_BINDIR=$(san "${PAYLOAD_BINDIR:-${INPUT_BINDIR:-false}}")"
           echo "ATTEMPT=$(san "${PAYLOAD_ATTEMPT:-${INPUT_ATTEMPT:-1}}")"
         } >> "$GITHUB_ENV"
+
+    - name: Initialization environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        apt-get -qq update
+        apt-get install -y -qq --no-install-recommends \
+          build-essential clang flex bison gawk gcc-multilib g++-multilib \
+          gettext git libncurses-dev libssl-dev python3 python3-setuptools \
+          python3-venv python3-pyelftools rsync swig unzip zlib1g-dev \
+          file wget curl ca-certificates subversion xz-utils zstd ccache \
+          cmake ninja-build libelf-dev libxml-parser-perl pkgconf patch \
+          bc cpio time zip jq erofs-utils tzdata
+        if [ "$SSH" = "true" ]; then apt-get install -y -qq tmux; fi
+        id buildbot >/dev/null 2>&1 || useradd -m -s /bin/bash buildbot
+        ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime
+        git config --system --add safe.directory '*'
 
     # The runner's CPU vendor is fixed at allocation and cannot be changed
     # within a run, so retrying means starting a new run: on a non-AMD runner,
@@ -210,27 +226,6 @@ jobs:
         # later steps do not run if it never lands.
         sleep 60
         exit 1
-
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime
-        git config --system --add safe.directory '*'
-        # tmux is only needed for SSH debugging; erofs-utils makes the erofs rootfs
-        pkgs=""
-        command -v mkfs.erofs >/dev/null 2>&1 || pkgs="$pkgs erofs-utils"
-        # The prebuilt LLVM-BPF tarball is .tar.zst
-        command -v zstd >/dev/null 2>&1 || pkgs="$pkgs zstd"
-        if [ "$SSH" = "true" ]; then
-          command -v tmux >/dev/null 2>&1 || pkgs="$pkgs tmux"
-        fi
-        if [ -n "$pkgs" ]; then
-          apt-get -qq update
-          apt-get -y -qq install $pkgs
-        else
-          echo "nothing to install"
-        fi
 
     - name: Checkout
       uses: actions/checkout@main
@@ -317,8 +312,14 @@ jobs:
           (cd /tmp && sha256sum -c llvm-sum) || { echo "::warning::checksum mismatch for $name from $base"; continue; }
           tar --zstd -xf "/tmp/$name" -C . || continue
           if [ -f llvm-bpf/.llvm-version ]; then
+            # Detect incompatible host libraries and a missing BPF backend now,
+            # before the much more expensive tools and firmware builds.
+            if ! llvm-bpf/bin/clang --version || ! printf 'int x;\n' | llvm-bpf/bin/clang -target bpf -x c -c - -o /tmp/llvm-bpf-probe.o; then
+              echo "::error::prebuilt LLVM-BPF $ver cannot compile BPF on this build host"
+              exit 1
+            fi
+            rm -f /tmp/llvm-bpf-probe.o "/tmp/$name"
             echo "::notice::prebuilt LLVM-BPF $ver from $base"
-            rm -f "/tmp/$name"
             exit 0
           fi
         done
@@ -334,6 +335,8 @@ jobs:
       run: |
         cd openwrt
         tc=$( {
+                # Host tools in this cache depend on the container runtime.
+                printf '%s\n' 'ubuntu-24.04'
                 find tools toolchain -type f -print0 | sort -z | xargs -0 sha256sum
                 # Config that affects toolchain output belongs in the key too,
                 # or a gcc/libc change reuses the wrong cache
