@@ -79,7 +79,7 @@ the upstream branch and dispatches a build when it moves; `lint.yml` runs
 | `files/` | Copied into the image as-is: uci-defaults, sysctl, hotplug scripts, nftables snippets, `easyupdate.sh`, `podman-stack`. |
 | `before-installing-feed.sh` | Runs in the cloned tree before `feeds update`: edits `feeds.conf.default`. |
 | `after-installing-feed.sh` | Runs after `feeds install`: patches feed Makefiles (luci-light theme dep, Go module cache path, miniupnpd NAT loopback, image partition alignment) and clones `luci-app-podman`. |
-| `AGENTS.md` | The long-form notes: every non-obvious constraint that this build depends on. |
+| `AGENTS.md` | Project guidance and links to detailed build and runtime notes under `docs/`. |
 
 Both feed scripts run with `openwrt/` as their working directory, so their paths
 are relative to the upstream tree, not to this repo.
@@ -90,8 +90,9 @@ are relative to the upstream tree, not to this repo.
   `containers.conf` and the network definition have to be written by hand, and
   the graphroot pointed at persistent non-rootfs storage before pulling any
   image -- the rootfs partition is small. If you put it on a mounted data disk,
-  read the note in `AGENTS.md` about rc.d ordering first: podman starts before
-  the mount is ready and fails in ways that look like nothing is wrong.
+  read the note in [runtime constraints](docs/runtime-constraints.md) about rc.d ordering
+  first: podman starts before the mount is ready and fails in ways that look like nothing
+  is wrong.
 - **Bandwidth values are per-line.** qosify ships disabled with no rate set, and
   the speed UPnP advertises is likewise left empty. Measure the line, then fill
   them in.
@@ -102,12 +103,12 @@ are relative to the upstream tree, not to this repo.
 - Other deliberate non-defaults: ULA, SSH port and auth, whether UPnP is enabled,
   dae's node configuration, any `/mnt` mount, and bypass access to an ONT's
   management page on a PPPoE uplink (that last one has a worked example in
-  `AGENTS.md`).
+  [factory defaults](docs/factory-defaults.md)).
 
 ## Before changing anything
 
-Read [`AGENTS.md`](AGENTS.md). It documents the constraints that are not visible
-from the file you would be editing -- toolchain caching, the prebuilt LLVM-BPF
+Read [`AGENTS.md`](AGENTS.md) and its linked notes. They document constraints that are
+not visible from the file you would be editing -- toolchain caching, the prebuilt LLVM-BPF
 fetch ordering, why the kernel fragment must land in the subtarget directory, the
 OTA version contract with routers already in the field, and the interactions
 between flow offload, qosify and dae. Several of them fail silently.

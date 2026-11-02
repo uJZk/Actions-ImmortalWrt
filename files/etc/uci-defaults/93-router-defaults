@@ -166,7 +166,7 @@ fi
 
 # The luci-app-daede backend is dae, not daed. This must stay aligned with
 # CONFIG_PACKAGE_luci-app-daede_dae in .config, or the kconfig choice pulls
-# daed into the image as well (see AGENTS.md).
+# daed into the image as well (see docs/runtime-constraints.md).
 [ -n "$(uci -q get daede.config)" ] && {
 	set_if_unset daede.config.active_backend 'dae'
 	uci commit daede
