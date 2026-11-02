@@ -15,5 +15,5 @@ sed -i '/video/d' feeds.conf.default
 # lets qosify's egress filter later on the same clsact still run; the packages
 # copy returns TC_ACT_OK for forwarded packets and silently kills egress DSCP
 # marking. That tarball rerolls every few days, so the guarantee is not
-# permanent -- see CLAUDE.md.
+# permanent -- see AGENTS.md.
 sed -i '1i src-git daede https://github.com/kenzok8/openwrt-daede' feeds.conf.default

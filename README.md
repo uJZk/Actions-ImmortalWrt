@@ -12,10 +12,10 @@ ImmortalWrt into `openwrt/` on the runner and injects this repo's `.config`,
 kernel fragment, `files/` overlay, and two feed-patch scripts into that tree.
 Editing anything here changes a build recipe, not a program.
 
-The output is a GPT/EFI image with an EROFS root (`*combined-efi.img.gz`) plus a
-rootfs tarball. BIOS GRUB, SquashFS and ext4 images are switched off. The target
-is a single generic x86_64 profile, compiled with `-march=goldmont-plus` -- that
-is one specific box (a J4125 mini PC), not a portable default. This is one
+The configured output includes a GPT/EFI image with an EROFS root
+(`*combined-efi.img.gz`), VHDX images, and a rootfs tarball. BIOS GRUB,
+SquashFS and ext4 images are switched off. The target is a single generic
+x86_64 profile, compiled with `-march=goldmont-plus` -- that is one specific box (a J4125 mini PC), not a portable default. This is one
 person's build, tuned for a mainland-China home line; treat it as a starting
 point to fork, not as a distribution.
 
@@ -37,9 +37,9 @@ The package selection is opinionated. The main deviations from a stock build:
 | OTA via `easyupdate.sh` | `/usr/bin/easyupdate.sh -c` checks the newest GitHub release, `-u` downloads, sha256-verifies and flashes it. Release assets are fetched via github.com first and a list of mirrors as fallback. A commented weekly cron entry is shipped in `/etc/crontabs/root`. |
 
 `files/etc/uci-defaults/` also lands timezone/NTP, the LAN domain, packet
-steering, fullcone NAT, UPnP parameters and an apk mirror. Those scripts only
-fill in missing values -- `/etc/config/` is on sysupgrade's keep list, so what is
-already on the device wins.
+steering, fullcone NAT, UPnP parameters and an apk mirror. Some settings are
+filled only when missing or still at their factory values; others, including
+flow offload and packet steering, are overwritten on each flash even though `/etc/config/` is on sysupgrade's keep list.
 
 ## Building it
 
@@ -61,10 +61,11 @@ Inputs worth knowing:
 | `repo`, `name`, `config`, `kernel_config`, `feeds_conf` | -- | Point the build at a different source tree or a different set of config files. |
 
 A build takes roughly an hour on a warm cache. The job asks for an AMD runner: on
-a non-AMD one it re-dispatches itself and cancels the current run, up to five
-times, so a single manual dispatch can leave cancelled runs behind. That is
-expected. `update-checker.yml` watches the upstream branch and dispatches a build
-when it moves; `lint.yml` runs `actionlint` and `shellcheck`.
+a non-AMD one it re-dispatches itself and cancels the current run for up to
+four retries. The fifth attempt builds even on a non-AMD runner, so a single
+manual dispatch can leave cancelled runs behind. `update-checker.yml` watches
+the upstream branch and dispatches a build when it moves; `lint.yml` runs
+`actionlint` and `shellcheck`.
 
 ## Repository layout
 
@@ -78,7 +79,7 @@ when it moves; `lint.yml` runs `actionlint` and `shellcheck`.
 | `files/` | Copied into the image as-is: uci-defaults, sysctl, hotplug scripts, nftables snippets, `easyupdate.sh`, `podman-stack`. |
 | `before-installing-feed.sh` | Runs in the cloned tree before `feeds update`: edits `feeds.conf.default`. |
 | `after-installing-feed.sh` | Runs after `feeds install`: patches feed Makefiles (luci-light theme dep, Go module cache path, miniupnpd NAT loopback, image partition alignment) and clones `luci-app-podman`. |
-| `CLAUDE.md` | The long-form notes: every non-obvious constraint that this build depends on. |
+| `AGENTS.md` | The long-form notes: every non-obvious constraint that this build depends on. |
 
 Both feed scripts run with `openwrt/` as their working directory, so their paths
 are relative to the upstream tree, not to this repo.
@@ -89,7 +90,7 @@ are relative to the upstream tree, not to this repo.
   `containers.conf` and the network definition have to be written by hand, and
   the graphroot pointed at persistent non-rootfs storage before pulling any
   image -- the rootfs partition is small. If you put it on a mounted data disk,
-  read the note in `CLAUDE.md` about rc.d ordering first: podman starts before
+  read the note in `AGENTS.md` about rc.d ordering first: podman starts before
   the mount is ready and fails in ways that look like nothing is wrong.
 - **Bandwidth values are per-line.** qosify ships disabled with no rate set, and
   the speed UPnP advertises is likewise left empty. Measure the line, then fill
@@ -101,34 +102,17 @@ are relative to the upstream tree, not to this repo.
 - Other deliberate non-defaults: ULA, SSH port and auth, whether UPnP is enabled,
   dae's node configuration, any `/mnt` mount, and bypass access to an ONT's
   management page on a PPPoE uplink (that last one has a worked example in
-  `CLAUDE.md`).
+  `AGENTS.md`).
 
 ## Before changing anything
 
-Read [`CLAUDE.md`](CLAUDE.md). It documents the constraints that are not visible
+Read [`AGENTS.md`](AGENTS.md). It documents the constraints that are not visible
 from the file you would be editing -- toolchain caching, the prebuilt LLVM-BPF
 fetch ordering, why the kernel fragment must land in the subtarget directory, the
 OTA version contract with routers already in the field, and the interactions
 between flow offload, qosify and dae. Several of them fail silently.
 
-## Credits
-
-- [P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)
-- [GitHub Actions](https://github.com/features/actions)
-- [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)
-- [sundaqiang/openwrt-packages](https://github.com/sundaqiang/openwrt-packages/tree/master/luci-app-easyupdate)
-- [kenzok8/openwrt-daede](https://github.com/kenzok8/openwrt-daede)
-- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
-- [owenthereal/action-upterm](https://github.com/owenthereal/action-upterm)
-- [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
-- [ophub/delete-releases-workflows](https://github.com/ophub/delete-releases-workflows)
-
-
-## License
-
-[MIT](https://github.com/uJZk/Actions-ImmortalWrt/blob/main/LICENSE) © [**uJZk**](https://github.com/uJZk)
-
-### UPnP STUN and filtered NAT
+## UPnP STUN and filtered NAT
 
 The nftables build uses a dedicated fw4 input set for miniupnpd's temporary
 STUN UDP sockets. Entries expire after 60 seconds even if the daemon crashes;
@@ -142,3 +126,22 @@ is off by default and only takes effect with STUN enabled. It emits
 even when the probe reports filtering. It does not create an upstream mapping or
 make an otherwise unreachable port reachable. Custom miniupnpd configuration
 files must set `ext_perform_stun` themselves.
+
+Firmware build and router tests remain outstanding; see
+[the STUN status](docs/upnp-stun-status.md) for details.
+
+## Credits
+
+- [P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)
+- [GitHub Actions](https://github.com/features/actions)
+- [ImmortalWrt](https://github.com/immortalwrt/immortalwrt)
+- [sundaqiang/openwrt-packages](https://github.com/sundaqiang/openwrt-packages/tree/master/luci-app-easyupdate)
+- [kenzok8/openwrt-daede](https://github.com/kenzok8/openwrt-daede)
+- [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
+- [owenthereal/action-upterm](https://github.com/owenthereal/action-upterm)
+- [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
+- [ophub/delete-releases-workflows](https://github.com/ophub/delete-releases-workflows)
+
+## License
+
+[MIT](https://github.com/uJZk/Actions-ImmortalWrt/blob/main/LICENSE) © [**uJZk**](https://github.com/uJZk)

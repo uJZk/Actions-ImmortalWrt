@@ -11,8 +11,9 @@ An explicit stop takes precedence. See `files/etc/podman-stack.d/README` for
 concurrency, reboot, and option availability limitations.
 
 `podman-stack update` requires an explicit trusted definition for each managed
-container. It retains the original container until the replacement starts,
-attempts rollback on failure, and keeps the prior image under a dedicated tag.
+container. It retains the original container until the replacement is created
+and, if the original was running, started. It attempts rollback on failure and
+keeps the prior image under a dedicated tag.
 Updates do not undo data-volume changes or verify application readiness. Avoid
 concurrent changes via LuCI or other Podman commands. LuCI's container rebuild
 only covers a subset of inspect options. Both old and new LuCI init service

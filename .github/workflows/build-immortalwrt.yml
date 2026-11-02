@@ -532,7 +532,7 @@ jobs:
         fi
 
     # Full parallelism is safe: tools/libtool failures here come from a RELEASE
-    # environment variable poisoning autoconf's version (see CLAUDE.md), not
+    # environment variable poisoning autoconf's version (see AGENTS.md), not
     # from -j, so lowering it only wastes time. No retry either -- a failure is
     # a failure, re-run the whole job.
     - name: Build host tools

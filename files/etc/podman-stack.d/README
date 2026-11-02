@@ -14,7 +14,8 @@ One trusted shell definition per container, /etc/podman-stack.d/*.conf:
 Definitions are sourced as root: only install trusted files, and specify every
 required creation option, including mounts, network, health check and labels.
 The create function must create NAME from IMAGE. Update skips missing and
---rm containers. No definition is required by the watchdog.
+--rm containers and exits nonzero for those definitions. No definition is
+required by the watchdog.
 
 Watchdog runs health probes for running containers. On unhealthy it uses the
 Podman 5.8 service-stop option and starts the container again. Failed starts
@@ -35,9 +36,9 @@ Updates pull first, stop the old container if needed, rename it to
 NAME-podman-stack-backup, create and (if previously running) start the new one,
 then remove the backup. If creation or start fails, rollback removes the new
 container and restores the old one. A successful start is not a health or
-readiness check. The update exits nonzero on errors and does not globally prune images. It tags
-the immediately preceding image under localhost/podman-stack-backup/ and records
-its ID in .state. On the next successful update it removes its own older tag and
+readiness check. The update exits nonzero on errors and does not globally prune
+images. It tags the immediately preceding image under
+localhost/podman-stack-backup/ and records its ID in .state. On the next successful update it removes its own older tag and
 tries to delete that older image only if it has no other tags; Podman refuses
 removal while a container still uses it. Keep the reserved backup tags and state
 together. Interrupted cleanup or images with other users may leave extra images.
