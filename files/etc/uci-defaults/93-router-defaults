@@ -179,16 +179,16 @@ CRON=/etc/crontabs/root
 [ -f "$CRON" ] || : > "$CRON"
 if ! grep -q "podman-stack update" "$CRON" 2>/dev/null; then
 	cat >> "$CRON" <<'CRONEOF'
-
-# The definition directory /etc/podman-stack.d ships empty, so this entry does
-# nothing until it is filled in.
+# Update only containers with definitions in /etc/podman-stack.d.
 20 4 * * * /usr/bin/podman-stack update >/dev/null 2>&1
-# podman runs no health probes without systemd; without this the health column
-# in `podman ps` is a frozen snapshot rather than a status. Restarts only
-# containers that are running and unhealthy.
+CRONEOF
+fi
+if ! grep -q "podman-stack watchdog" "$CRON" 2>/dev/null; then
+	cat >> "$CRON" <<'CRONEOF'
+# Probe health and recover stopped containers according to Podman policy.
 */5 * * * * /usr/bin/podman-stack watchdog >/dev/null 2>&1
 CRONEOF
-	chmod 600 "$CRON"
 fi
+chmod 600 "$CRON"
 
 exit 0

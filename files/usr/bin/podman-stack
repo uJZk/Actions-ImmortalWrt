@@ -1,86 +1,224 @@
 #!/bin/sh
-# Supplies the two things podman cannot do without systemd on OpenWrt:
-#
-#   - --health-interval schedules probes through systemd transient timers, so
-#     nothing ever fires them here. --health-cmd stays configured but never
-#     runs, and the health column of `podman ps` freezes on the last result --
-#     it reads as live status but is a snapshot. `watchdog` runs the probes.
-#
-#   - `podman auto-update` only touches containers carrying the
-#     PODMAN_SYSTEMD_UNIT label a quadlet writes, so it is unusable here.
-#     `update` reimplements it by comparing image ids.
-#
-# Boot autostart is not this script's business: it belongs to the
-# /etc/init.d/container-<name> procd services luci-app-podman generates.
-# watchdog only restarts containers that are running but unhealthy, never
-# starts a stopped one, so the two never fight.
+# OpenWrt health probes and definition-based image updates; see podman-stack.d/README.
 set -u
 LOG_TAG=podman-stack
 DEFS_DIR=/etc/podman-stack.d
+STATE_DIR="$DEFS_DIR/.state"
+LOCK_DIR=/var/run/podman-stack.lock
+RETRY_DIR=/var/run/podman-stack-retry
 
-log() { logger -t "$LOG_TAG" "$*"; }
-have_podman() { [ -x /usr/bin/podman ] || exit 0; }
+log() { logger -t "$LOG_TAG" -- "$*"; }
+valid_name() { case "$1" in ''|*[!A-Za-z0-9_.-]*) return 1;; esac; }
 
-# Only containers with a health probe are eligible: `healthcheck run` always
-# fails on one without a probe, and that must not read as unhealthy.
-cmd_watchdog() {
-	have_podman
-	# Collect the names first rather than piping into `while read`:
-	# `podman healthcheck run` consumes the rest of the loop's stdin, so only
-	# the first container gets checked and the others silently stay in
-	# starting. Container names contain no spaces, so the unquoted for is safe.
-	names="$(podman ps --format '{{.Names}}' 2>/dev/null)"
-	for n in $names; do
-		podman inspect -f '{{if .Config.Healthcheck}}yes{{end}}' "$n" 2>/dev/null | grep -q yes || continue
-		podman healthcheck run "$n" >/dev/null 2>&1 </dev/null && continue
-		[ "$(podman inspect -f '{{.State.Health.Status}}' "$n" 2>/dev/null)" = unhealthy ] || continue
-		log "$n: unhealthy, restarting"
-		podman restart "$n" >/dev/null 2>&1 </dev/null || log "$n: restart FAILED"
-	done
+# One update or watchdog at a time. /var/run is cleared on reboot.
+lock() {
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		owner=$(cat "$LOCK_DIR/pid" 2>/dev/null || :)
+		case "$owner" in ''|*[!0-9]*) log "lock busy or incomplete: $LOCK_DIR"; return 1;; esac
+		if kill -0 "$owner" 2>/dev/null; then
+			log "another run is active (pid $owner)"
+			return 1
+		fi
+		# Only one contender may reclaim a stale lock.
+		mkdir "$LOCK_DIR/reclaim" 2>/dev/null || return 1
+		rm -f "$LOCK_DIR/pid"
+		rmdir "$LOCK_DIR/reclaim" "$LOCK_DIR" 2>/dev/null || return 1
+		mkdir "$LOCK_DIR" 2>/dev/null || return 1
+	fi
+	echo "$$" > "$LOCK_DIR/pid"
+	trap 'rm -f "$LOCK_DIR/pid" "$LOCK_DIR/output"; rmdir "$LOCK_DIR" 2>/dev/null || :' EXIT
+	trap 'exit 1' HUP INT TERM
 }
 
-# Reads each $DEFS_DIR/*.conf, which supplies NAME, IMAGE and a create().
-# The directory ships empty, so this command is inert by default.
+# Include the command's diagnostics in syslog instead of discarding stderr.
+run_logged() {
+	label=$1; shift
+	out="$LOCK_DIR/output"
+	if "$@" >"$out" 2>&1 </dev/null; then
+		rm -f "$out"
+		return 0
+	fi
+	log "$label: failed"
+	while IFS= read -r line || [ -n "$line" ]; do log "$label: $line"; done < "$out"
+	rm -f "$out"
+	return 1
+}
+
+load_def() {
+	NAME='' IMAGE=''
+	# shellcheck disable=SC1090
+	. "$1"
+	if ! valid_name "$NAME"; then log "${1##*/}: invalid or missing NAME"; return 1; fi
+}
+
+# A retry marker is keyed by immutable container ID, not by name. A manual
+# stop sets StoppedByUser and always overrides both a marker and restart policy.
+cmd_watchdog() {
+	mkdir -p "$RETRY_DIR" || { log 'cannot create watchdog retry directory'; return 1; }
+	names=$(podman ps -a --format '{{.Names}}' 2>/dev/null) || { log 'cannot list containers'; return 1; }
+	for n in $names; do
+		valid_name "$n" || continue
+		id=$(podman inspect -f '{{.Id}}' "$n" 2>/dev/null) || { log "$n: cannot inspect container ID"; failed=1; continue; }
+		case "$id" in ''|*[!a-fA-F0-9]*) log "$n: invalid container ID"; failed=1; continue;; esac
+		marker="$RETRY_DIR/$id"
+		status=$(podman inspect -f '{{.State.Status}}' "$id" 2>/dev/null) || { log "$n: cannot inspect state"; failed=1; continue; }
+		stopped=$(podman inspect -f '{{.State.StoppedByUser}}' "$id" 2>/dev/null) || { log "$n: cannot inspect StoppedByUser"; failed=1; continue; }
+		case "$stopped" in
+			true) rm -f "$marker"; continue;;
+			false) :;;
+			*) log "$n: StoppedByUser unavailable; skipping"; failed=1; continue;;
+		esac
+		case "$status" in
+			exited|stopped|created)
+				policy=$(podman inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$id" 2>/dev/null) || { log "$n: cannot inspect restart policy"; failed=1; continue; }
+				# Do not override on-failure retry limits or start newly created
+				# containers unless this watchdog itself initiated recovery.
+				if [ ! -f "$marker" ]; then
+					[ "$status" != created ] || continue
+					case "$policy" in always|unless-stopped) :;; *) continue;; esac
+				fi
+				# Recheck immediately before start to honor an explicit stop.
+				[ "$(podman inspect -f '{{.State.StoppedByUser}}' "$id" 2>/dev/null)" = false ] || continue
+				log "$n: recovering stopped container"
+				if run_logged "$n start" podman start "$id"; then rm -f "$marker"; else failed=1; fi
+				;;
+			running)
+				rm -f "$marker"
+				podman inspect -f '{{if .Config.Healthcheck}}yes{{end}}' "$id" 2>/dev/null | grep -q yes || continue
+				podman healthcheck run "$id" >/dev/null 2>&1 </dev/null && continue
+				[ "$(podman inspect -f '{{.State.Health.Status}}' "$id" 2>/dev/null)" = unhealthy ] || continue
+				# Refuse to stop if we cannot persist the recovery intent. The
+				# service stop does not set StoppedByUser; a later manual stop does.
+				: > "$marker" || { log "$n: cannot record recovery intent"; failed=1; continue; }
+				log "$n: unhealthy, stopping as a service"
+				if ! run_logged "$n stop" podman stop --service "$id"; then
+					log "$n: stop failed; will recheck next run"
+					failed=1; continue
+				fi
+				if [ "$(podman inspect -f '{{.State.StoppedByUser}}' "$id" 2>/dev/null)" != false ]; then
+					log "$n: explicitly stopped or state unavailable; not starting"
+					continue
+				fi
+				if run_logged "$n start" podman start "$id"; then rm -f "$marker"; else failed=1; fi
+				;;
+		esac
+	done
+	return "$failed"
+}
+
+rollback() {
+	# The renamed original is retained until the replacement starts successfully.
+	if podman container exists "$NAME" >/dev/null 2>&1; then
+		run_logged "$NAME remove failed replacement" podman rm -f "$NAME" || return 1
+	fi
+	run_logged "$NAME restore name" podman rename "$backup" "$NAME" || return 1
+	if [ "$running" = true ]; then
+		run_logged "$NAME restore start" podman start "$NAME" || return 1
+	fi
+	log "$NAME: previous container restored"
+}
+
+# Backup tags are namespaced by hashes; no global image prune is performed.
+image_tag() {
+	name_hash=$(printf %s "$NAME" | sha256sum) || return 1
+	id_hash=$(printf %s "$1" | sha256sum) || return 1
+	printf 'localhost/podman-stack-backup/c%s:b%s\n' "${name_hash%% *}" "${id_hash%% *}"
+}
+
+retain_previous_image() {
+	mkdir -p "$STATE_DIR" || return 1
+	state_file="$STATE_DIR/$NAME.previous-image"
+	previous_id=$(cat "$state_file" 2>/dev/null || :)
+	new_tag=$(image_tag "$before") || return 1
+	run_logged "$NAME retain previous image" podman tag "$before" "$new_tag" || return 1
+	printf '%s\n' "$before" > "$state_file.tmp" && mv "$state_file.tmp" "$state_file" || return 1
+	log "$NAME: retained previous image $before as $new_tag"
+}
+
+cleanup_previous_image() {
+	[ -n "$previous_id" ] && [ "$previous_id" != "$before" ] && [ "$previous_id" != "$after" ] || return 0
+	old_tag=$(image_tag "$previous_id") || return 1
+	# Remove only our own tag, then delete the image only if no other tag
+	# remains. Podman refuses removal when a container still uses the image.
+	run_logged "$NAME remove old backup tag" podman untag "$previous_id" "$old_tag" || return 1
+	tags=$(podman image inspect -f '{{range .RepoTags}}{{println .}}{{end}}' "$previous_id" 2>/dev/null) || return 0
+	case "$tags" in ''|'<none>:<none>') :;; *) log "$NAME: older image has other tags; keeping it"; return 0;; esac
+	if ! run_logged "$NAME remove older image" podman image rm "$previous_id"; then
+		log "$NAME: older image retained (possibly still in use)"
+	fi
+}
+
+update_one() (
+	load_def "$1" || exit 1
+	[ -n "$IMAGE" ] || { log "$NAME: IMAGE is missing"; exit 1; }
+	command -v create >/dev/null 2>&1 || { log "$NAME: create() is missing"; exit 1; }
+	backup="${NAME}-podman-stack-backup"
+	if podman container exists "$backup" >/dev/null 2>&1; then
+		log "$NAME: backup $backup already exists; resolve it before updating"
+		exit 1
+	fi
+	podman container exists "$NAME" >/dev/null 2>&1 || { log "$NAME: container missing, skipping"; exit 1; }
+	auto_remove=$(podman inspect -f '{{.HostConfig.AutoRemove}}' "$NAME" 2>/dev/null) || { log "$NAME: cannot inspect auto-remove setting"; exit 1; }
+	[ "$auto_remove" = false ] || { log "$NAME: auto-remove is enabled or unknown; skipping"; exit 1; }
+	before=$(podman inspect -f '{{.Image}}' "$NAME" 2>/dev/null) || { log "$NAME: cannot inspect image"; exit 1; }
+	running=$(podman inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null) || { log "$NAME: cannot inspect running state"; exit 1; }
+	case "$running" in true|false) :;; *) log "$NAME: invalid running state"; exit 1;; esac
+	run_logged "$NAME pull" podman pull -q "$IMAGE" || exit 1
+	after=$(podman image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null) || { log "$NAME: cannot inspect pulled image"; exit 1; }
+	[ -n "$before" ] && [ -n "$after" ] || { log "$NAME: empty image ID"; exit 1; }
+	[ "$before" != "$after" ] || exit 0
+	log "$NAME: image changed, recreating with backup $backup"
+	if [ "$running" = true ]; then
+		run_logged "$NAME stop" podman stop "$NAME" || exit 1
+	fi
+	if ! run_logged "$NAME backup rename" podman rename "$NAME" "$backup"; then
+		[ "$running" != true ] || run_logged "$NAME restart original" podman start "$NAME" || :
+		exit 1
+	fi
+	if ! run_logged "$NAME create" create; then
+		rollback || log "$NAME: rollback failed; inspect $NAME and $backup"
+		exit 1
+	fi
+	if ! podman container exists "$NAME" >/dev/null 2>&1; then
+		log "$NAME: create() returned success but container is missing"
+		rollback || log "$NAME: rollback failed; inspect $backup"
+		exit 1
+	fi
+	new_image=$(podman inspect -f '{{.Image}}' "$NAME" 2>/dev/null) || new_image=''
+	if [ "$new_image" != "$after" ]; then
+		log "$NAME: replacement does not use the pulled image"
+		rollback || log "$NAME: rollback failed; inspect $NAME and $backup"
+		exit 1
+	fi
+	if [ "$running" = true ] && ! run_logged "$NAME start replacement" podman start "$NAME"; then
+		rollback || log "$NAME: rollback failed; inspect $NAME and $backup"
+		exit 1
+	fi
+	if ! retain_previous_image; then
+		log "$NAME: cannot retain previous image; backup container remains: $backup"
+		exit 1
+	fi
+	if ! run_logged "$NAME remove backup" podman rm "$backup"; then
+		log "$NAME: update succeeded but backup remains: $backup"
+		exit 1
+	fi
+	cleanup_previous_image || log "$NAME: could not clean up older managed image"
+	log "$NAME: updated (previous running state: $running)"
+)
+
 cmd_update() {
-	have_podman
-	[ -d "$DEFS_DIR" ] || return 0
 	for def in "$DEFS_DIR"/*.conf; do
 		[ -f "$def" ] || continue
-		( # Subshell: definitions must not leak into each other
-		NAME=; IMAGE=
-		# shellcheck disable=SC1090
-		. "$def"
-		[ -n "$NAME" ] && [ -n "$IMAGE" ] || { log "${def##*/}: NAME or IMAGE is missing"; exit 0; }
-		command -v create >/dev/null 2>&1 || { log "$NAME: the definition has no create()"; exit 0; }
-		podman container exists "$NAME" 2>/dev/null || { log "$NAME: container does not exist, skipping"; exit 0; }
-
-		before="$(podman inspect -f '{{.Image}}' "$NAME" 2>/dev/null)"
-		# Record whether it was running and restore that state below, or an
-		# image update starts a container someone deliberately stopped.
-		running="$(podman inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null)"
-
-		podman pull -q "$IMAGE" >/dev/null 2>&1 || { log "$NAME: pull failed, keeping the current image"; exit 0; }
-		after="$(podman image inspect -f '{{.Id}}' "$IMAGE" 2>/dev/null)"
-		[ -n "$after" ] || { log "$NAME: cannot read the new image id"; exit 0; }
-		[ "$before" != "$after" ] || exit 0
-
-		log "$NAME: image updated, recreating"
-		podman rm -f "$NAME" >/dev/null 2>&1
-		create >/dev/null 2>&1 || { log "$NAME: recreate failed"; exit 0; }
-		if [ "$running" = true ]; then
-			podman start "$NAME" >/dev/null 2>&1 &&
-				log "$NAME: recreated and started" || log "$NAME: failed to start"
-		else
-			log "$NAME: recreated, left stopped (it was not running)"
-		fi
-		)
+		update_one "$def" || failed=1
 	done
-	# Removes only the untagged images the pulls above left behind
-	podman image prune -f >/dev/null 2>&1
+	return "$failed"
 }
 
 case "${1:-}" in
-watchdog) cmd_watchdog ;;
-update)   cmd_update ;;
-*) echo "usage: ${0##*/} {watchdog|update}" >&2; exit 1 ;;
+	watchdog|update)
+		command -v podman >/dev/null 2>&1 || { log 'podman not found'; exit 1; }
+		lock || exit 1
+		failed=0
+		"cmd_$1" ;;
+	*) echo 'usage: podman-stack {watchdog|update}' >&2; exit 1;;
 esac

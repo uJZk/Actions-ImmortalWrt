@@ -28,7 +28,7 @@ The package selection is opinionated. The main deviations from a stock build:
 | `unbound` + `odhcpd`, no dnsmasq at all | dnsmasq-full and every sub-option are deselected, and `odhcpd-ipv6only` is swapped for the full `odhcpd` so DHCPv4 still exists. unbound ships a supported odhcpd lease bridge, so LAN hostnames still resolve. Forwarding is fixed to a public resolver rather than recursing or following the ISP. |
 | `qosify` (cake) for shaping | Rate limits ship empty and the service ships disabled -- they are per-line and have to be measured on site. Structural parameters (diffserv4, NAT awareness, PPPoE overhead) are pre-set. |
 | `dae` via the `daede` feed, with `luci-app-daede` | The feed is pinned ahead of `packages` in `feeds.conf.default` because both ship a package called `dae`, and only the `daede` copy returns `TC_ACT_PIPE` on WAN egress, which is what lets qosify's DSCP marking still run on the same `clsact`. |
-| `podman` plus the third-party `luci-app-podman` | The LuCI app is cloned into `package/`, not added as a feed. `files/usr/bin/podman-stack` adds the two things podman cannot schedule without systemd: `watchdog` (runs health probes) and `update` (rebuilds containers from `/etc/podman-stack.d/*.conf`). |
+| `podman` plus the third-party `luci-app-podman` | The LuCI app is cloned into `package/`, not added as a feed. `files/usr/bin/podman-stack` adds the two things podman cannot schedule without systemd: `watchdog` (runs health probes and recovers eligible stopped containers) and `update` (rebuilds defined containers with rollback on failure). |
 | `miniupnpd-nftables` with NAT loopback | miniupnpd has no hairpin support. `after-installing-feed.sh` patches out the `iif` match on its DNAT rules and adds a guard, and `files/usr/share/nftables.d/` supplies the return-path SNAT. |
 | `luci-theme-footstrap`, no bootstrap | Dropping bootstrap needs both a feed patch (it is a hard dependency of `luci-light`) and a uci-default to fix `mediaurlbase`. |
 | `f2fsck` + `fstrim` compiled in | The deployed router carries a separate f2fs data partition for podman's graphroot. This repo does not create that partition, but the image has to supply the two binaries, since neither is a busybox applet here and an apk-installed copy would not survive sysupgrade. |
@@ -96,7 +96,8 @@ are relative to the upstream tree, not to this repo.
   them in.
 - **`/etc/podman-stack.d/` ships empty** (README only), so `podman-stack update`
   does nothing until container definitions are written there. `watchdog` needs no
-  definitions and works on any running container that has a health probe.
+  definitions: it uses Podman restart policies and manual-stop state to decide
+  whether to recover stopped containers. See `files/etc/podman-stack.d/README`.
 - Other deliberate non-defaults: ULA, SSH port and auth, whether UPnP is enabled,
   dae's node configuration, any `/mnt` mount, and bypass access to an ONT's
   management page on a PPPoE uplink (that last one has a worked example in

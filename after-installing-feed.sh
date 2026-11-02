@@ -57,29 +57,6 @@ done
 git clone --depth=1 https://github.com/Zerogiven-OpenWRT-Packages/luci-app-podman \
 	package/luci-app-podman
 
-# The package imports init_action from luci.sys, a name luci-base's ucode sys
-# module has never exported. ucode resolves imports at compile time, so one
-# missing name makes the whole script fail to compile and rpcd registers no
-# podman ubus object at all: every LuCI call returns -32000 Object not found,
-# with nothing in logread to point here. Define the function locally; the grep
-# below stops matching, and warns, once upstream fixes this.
-pu=package/luci-app-podman/root/usr/share/rpcd/ucode/podman.uc
-if [ ! -f "$pu" ]; then
-	echo "::warning::$pu does not exist, the init_action patch was not applied and the Podman UI may be entirely broken"
-elif ! grep -q "^import { init_enabled, init_action } from 'luci.sys';" "$pu"; then
-	echo "::warning::the luci.sys import in $pu no longer matches, init_action patch not applied -- check whether upstream fixed it"
-else
-	# The definition must go after all imports, not between them.
-	sed -i \
-		-e "s|^import { init_enabled, init_action } from 'luci.sys';|import { init_enabled } from 'luci.sys';|" \
-		-e "s|^} from 'luci.podman_http';.*|&\n\n// luci-base's ucode sys module does not export init_action; define it here.\n// Callers read the return value as an exit code, which is system() semantics.\nfunction init_action(name, action) {\n\treturn system(\`/etc/init.d/\${name} \${action}\`);\n}|" \
-		"$pu"
-	grep -q '^function init_action(name, action) {$' "$pu" || {
-		echo "::error::failed to write the init_action patch into $pu"
-		exit 1
-	}
-fi
-
 # Keep only the footstrap theme. luci-light names luci-theme-bootstrap as a hard
 # dependency, so unchecking it in .config is selected straight back by make
 # defconfig and the collection's own dependency has to change. Edit the real

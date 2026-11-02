@@ -11,6 +11,7 @@ on:
       - 'files/usr/libexec/*'
       - 'files/usr/bin/*'
       - '.shellcheckrc'
+      - 'tests/test_podman_stack.py'
   pull_request:
     paths:
       - '.github/workflows/**'
@@ -21,6 +22,7 @@ on:
       - 'files/usr/libexec/*'
       - 'files/usr/bin/*'
       - '.shellcheckrc'
+      - 'tests/test_podman_stack.py'
   workflow_dispatch:
 
 jobs:
@@ -46,6 +48,9 @@ jobs:
       env:
         SHELLCHECK_OPTS: -e SC2086,SC2046,SC2206,SC2128,SC2178,SC2154
       run: ./actionlint -color
+
+    - name: Test podman-stack
+      run: python3 tests/test_podman_stack.py
 
     - name: shellcheck
       run: shellcheck -S warning before-installing-feed.sh after-installing-feed.sh files/usr/bin/easyupdate.sh files/etc/hotplug.d/net/20-rps-xps files/etc/hotplug.d/iface/20-rps-xps files/usr/libexec/arm-xps-flowlimit files/etc/uci-defaults/90-luci-theme files/etc/uci-defaults/91-unbound-odhcpd files/etc/uci-defaults/92-flowtable-no-wandev files/etc/uci-defaults/93-router-defaults files/etc/uci-defaults/94-unbound-private-tld files/etc/uci-defaults/95-apk-mirror files/usr/bin/podman-stack

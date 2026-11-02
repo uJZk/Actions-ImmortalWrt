@@ -1,6 +1,6 @@
-Container definitions read by `/usr/bin/podman-stack update`.
+OpenWrt Podman maintenance: /usr/bin/podman-stack {watchdog|update}
 
-One .conf file per container, in sh assignment form:
+One trusted shell definition per container, /etc/podman-stack.d/*.conf:
 
     NAME=SmartDNS
     IMAGE=docker.io/pymumu/smartdns:latest
@@ -11,12 +11,48 @@ One .conf file per container, in sh assignment form:
             "$IMAGE"
     }
 
-create() has to be written out by hand because podman offers no primitive
-that rebuilds a container in place on a new image. `podman auto-update` only
-recognises the PODMAN_SYSTEMD_UNIT label a quadlet writes, and
-`podman container clone` silently drops --network=host (the clone comes back
-on bridge) and every --cap-add, leaving a container that cannot start here.
-So update can only re-create from the original arguments given here.
+Definitions are sourced as root: only install trusted files, and specify every
+required creation option, including mounts, network, health check and labels.
+The create function must create NAME from IMAGE. Update skips missing and
+--rm containers. No definition is required by the watchdog.
 
-This directory ships empty, so update does nothing by default. watchdog needs
-no definitions and works on any running container that has a health probe.
+Watchdog runs health probes for running containers. On unhealthy it uses the
+Podman 5.8 service-stop option and starts the container again. Failed starts
+are retried on later runs using a temporary marker keyed by container ID.
+A stopped container with restart policy always or unless-stopped is also
+started, unless Podman reports StoppedByUser=true. Newly created containers,
+on-failure retry policies and containers without restart policy are not
+started automatically, except when retrying the watchdog's own failed restart.
+An explicit podman stop sets StoppedByUser and cancels a pending retry. The
+service-stop option is a hidden Podman CLI option and must be verified on the
+installed version. If unsupported, the failed stop is logged and no fallback
+stop is issued. Podman state and a concurrent manual stop can race; do not
+perform simultaneous manual and watchdog operations on the same container.
+Retry markers live in /var/run and do not survive a reboot; after reboot the
+container's own restart policy and the LuCI procd service determine recovery.
+
+Updates pull first, stop the old container if needed, rename it to
+NAME-podman-stack-backup, create and (if previously running) start the new one,
+then remove the backup. If creation or start fails, rollback removes the new
+container and restores the old one. A successful start is not a health or
+readiness check. The update exits nonzero on errors and does not globally prune images. It tags
+the immediately preceding image under localhost/podman-stack-backup/ and records
+its ID in .state. On the next successful update it removes its own older tag and
+tries to delete that older image only if it has no other tags; Podman refuses
+removal while a container still uses it. Keep the reserved backup tags and state
+together. Interrupted cleanup or images with other users may leave extra images.
+This retains an image for manual recovery; it does not automatically roll back
+when an application fails later.
+A process interruption, power loss, failed rollback or failed backup removal
+can leave the backup behind; future updates refuse to overwrite it. Inspect both
+containers and resolve them manually before retrying. Persistent volumes are not
+rolled back: application migrations may have already changed data.
+
+Watchdog and update share a lock; this does not lock LuCI or other Podman
+commands. Avoid running the LuCI image updater or manually modifying containers
+at the same time. LuCI reconstructs settings from inspect and does not preserve
+all options; it is not a substitute for these explicit definitions. Logs and
+command errors go to logread under the tag podman-stack. Health probe failures
+are expected and not logged individually; actual unhealthy restarts are logged.
+The lock lives under /var/run; if interrupted before its pid is written, remove
+/var/run/podman-stack.lock only after confirming no instance is active.
