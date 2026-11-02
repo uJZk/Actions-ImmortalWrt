@@ -1,0 +1,37 @@
+--- a/upnpsoap.c
++++ b/upnpsoap.c
+@@ -1894,6 +1894,9 @@
+ 	struct NameValueParserData data;
+ 	char * rem_host, * rem_port, * int_ip, * int_port, * protocol, * leaseTime;
+ 	char int_ip_resolved[INET6_ADDRSTRLEN];
++#ifndef UPNP_STRICT
++	char client_ip[INET6_ADDRSTRLEN];
++#endif
+ 	int uid = 0;
+ 	unsigned short iport, rport;
+ 	int ltime;
+@@ -1942,6 +1945,24 @@
+ 	 * - InternalClient value equals to the control point's IP address.
+ 	 * It is REQUIRED that InternalClient cannot be one of IPv6
+ 	 * addresses used by the gateway. */
++#ifndef UPNP_STRICT
++	/* Use only a native IPv6 peer as the target for an empty InternalClient. */
++	if (!int_ip || int_ip[0] == '\0')
++	{
++		if (!h->ipv6)
++		{
++			SoapError(h, 402, "Invalid Args");
++			goto clear_and_exit;
++		}
++		if (inet_ntop(AF_INET6, &h->clientaddr_v6, client_ip, sizeof(client_ip)) == NULL)
++		{
++			syslog(LOG_ERR, "inet_ntop: %m");
++			SoapError(h, 501, "Action Failed");
++			goto clear_and_exit;
++		}
++		int_ip = client_ip;
++	}
++#endif
+ 	if(!int_ip || int_ip[0] == '\0' || 0 == strcmp(int_ip, "*"))
+ 	{
+ 		SoapError(h, 708, "WildCardNotPermittedInSrcIP");

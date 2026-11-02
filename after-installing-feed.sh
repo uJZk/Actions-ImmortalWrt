@@ -159,3 +159,19 @@ stun_patch="$(dirname "$0")/patches/110-stun-input.patch"
 }
 mkdir -p "$mu/patches"
 cp "$stun_patch" "$mu/patches/110-stun-input.patch"
+
+# Empty NewInternalClient values fall back to the HTTP peer's IPv4 address.
+client_patch="$(dirname "$0")/patches/120-internal-client-fallback.patch"
+[ -f "$client_patch" ] || {
+	echo "::error::miniupnpd internal client fallback patch missing"
+	exit 1
+}
+cp "$client_patch" "$mu/patches/120-internal-client-fallback.patch"
+
+# The IPv6 firewall service applies the same fallback only to native IPv6 peers.
+pinhole_patch="$(dirname "$0")/patches/130-ipv6-pinhole-client-fallback.patch"
+[ -f "$pinhole_patch" ] || {
+	echo "::error::miniupnpd IPv6 pinhole fallback patch missing"
+	exit 1
+}
+cp "$pinhole_patch" "$mu/patches/130-ipv6-pinhole-client-fallback.patch"

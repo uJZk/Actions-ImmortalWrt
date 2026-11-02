@@ -1,0 +1,36 @@
+--- a/upnpsoap.c
++++ b/upnpsoap.c
+@@ -488,6 +488,9 @@
+ 	struct hostent *hp; /* getbyhostname() */
+ 	char ** ptr; /* getbyhostname() */
+ 	struct in_addr result_ip;/*unsigned char result_ip[16];*/ /* inet_pton() */
++#ifndef UPNP_STRICT
++	char client_ip[INET_ADDRSTRLEN];
++#endif
+ 
+ 	ParseNameValue(h->req_buf + h->req_contentoff, h->req_contentlen, &data);
+ 	int_ip = GetValueFromNameValueList(&data, "NewInternalClient");
+@@ -524,8 +527,22 @@
+ 	 * see https://github.com/miniupnp/miniupnp/issues/236 */
+ 	if (!int_ip || int_ip[0] == '\0')
+ 	{
+-		int_ip = h->clientaddr_str;
++		/* A native IPv6 peer does not identify an IPv4 mapping target. */
++#ifdef ENABLE_IPV6
++		if (h->ipv6) {
++			ClearNameValueList(&data);
++			SoapError(h, 402, "Invalid Args");
++			return;
++		}
++#endif
+ 		memcpy(&result_ip, &(h->clientaddr), sizeof(struct in_addr));
++		if (inet_ntop(AF_INET, &result_ip, client_ip, sizeof(client_ip)) == NULL) {
++			syslog(LOG_ERR, "inet_ntop: %m");
++			ClearNameValueList(&data);
++			SoapError(h, 501, "Action Failed");
++			return;
++		}
++		int_ip = client_ip;
+ 	}
+ 	else
+ #endif

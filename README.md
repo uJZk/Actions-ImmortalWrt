@@ -78,7 +78,7 @@ the upstream branch and dispatches a build when it moves; `lint.yml` runs
 | `config-6.18` | Kernel fragment. Copied into the *subtarget* directory and renamed to the source tree's actual kernel version -- it replaces upstream's subtarget config rather than layering onto it. |
 | `files/` | Copied into the image as-is: uci-defaults, sysctl, hotplug scripts, nftables snippets, `easyupdate.sh`, `podman-stack`. |
 | `before-installing-feed.sh` | Runs in the cloned tree before `feeds update`: edits `feeds.conf.default`. |
-| `after-installing-feed.sh` | Runs after `feeds install`: patches feed Makefiles (luci-light theme dep, Go module cache path, miniupnpd NAT loopback, image partition alignment) and clones `luci-app-podman`. |
+| `after-installing-feed.sh` | Runs after `feeds install`: patches feed packages (luci-light theme dep, Go module cache path, miniupnpd NAT loopback and empty internal-client fallbacks for IPv4 mappings and IPv6 pinholes, image partition alignment) and clones `luci-app-podman`. |
 | `AGENTS.md` | Project guidance and links to detailed build and runtime notes under `docs/`. |
 
 Both feed scripts run with `openwrt/` as their working directory, so their paths
