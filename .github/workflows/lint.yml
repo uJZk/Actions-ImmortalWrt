@@ -12,6 +12,11 @@ on:
       - 'files/usr/bin/*'
       - '.shellcheckrc'
       - 'tests/test_podman_stack.py'
+      - 'tests/test_upnp_patches.py'
+      - 'scripts/**'
+      - 'patches/*client-fallback*'
+      - 'patches/*stun*'
+      - 'patches/*nat-loopback*'
   pull_request:
     paths:
       - '.github/workflows/**'
@@ -23,6 +28,11 @@ on:
       - 'files/usr/bin/*'
       - '.shellcheckrc'
       - 'tests/test_podman_stack.py'
+      - 'tests/test_upnp_patches.py'
+      - 'scripts/**'
+      - 'patches/*client-fallback*'
+      - 'patches/*stun*'
+      - 'patches/*nat-loopback*'
   workflow_dispatch:
 
 jobs:
@@ -52,5 +62,8 @@ jobs:
     - name: Test podman-stack
       run: python3 tests/test_podman_stack.py
 
+    - name: Test UPnP patches
+      run: python3 tests/test_upnp_patches.py
+
     - name: shellcheck
-      run: shellcheck -S warning before-installing-feed.sh after-installing-feed.sh files/usr/bin/easyupdate.sh files/etc/hotplug.d/net/20-rps-xps files/etc/hotplug.d/iface/20-rps-xps files/usr/libexec/arm-xps-flowlimit files/etc/uci-defaults/90-luci-theme files/etc/uci-defaults/91-unbound-odhcpd files/etc/uci-defaults/92-flowtable-no-wandev files/etc/uci-defaults/93-router-defaults files/etc/uci-defaults/94-unbound-private-tld files/etc/uci-defaults/95-apk-mirror files/usr/bin/podman-stack
+      run: shellcheck -S warning before-installing-feed.sh after-installing-feed.sh scripts/apply-upnp-patches.sh files/usr/bin/easyupdate.sh files/etc/hotplug.d/net/20-rps-xps files/etc/hotplug.d/iface/20-rps-xps files/usr/libexec/arm-xps-flowlimit files/etc/uci-defaults/90-luci-theme files/etc/uci-defaults/91-unbound-odhcpd files/etc/uci-defaults/92-flowtable-no-wandev files/etc/uci-defaults/93-router-defaults files/etc/uci-defaults/94-unbound-private-tld files/etc/uci-defaults/95-apk-mirror files/usr/bin/podman-stack

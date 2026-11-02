@@ -194,8 +194,8 @@ These constraints can fail silently; check them when changing the image or route
 - **UPnP NAT loopback is assembled from two halves; doing only one DNATs intra-LAN traffic
   on the same port.** miniupnpd implements no hairpin, and every DNAT rule it writes carries
   `iif <ext_ifname>`, which a LAN client reaching the router's own public address can never
-  match. Three interdependent pieces fix it: (1) `after-installing-feed.sh` generates
-  `feeds/packages/net/miniupnpd/patches/100-nat-loopback.patch` so `configure` stops
+  match. Three interdependent pieces fix it: (1) `scripts/apply-upnp-patches.sh` installs
+  `patches/100-nat-loopback.patch` into the miniupnpd feed so `configure` stops
   defining `USE_IFNAME_IN_RULES`, dropping the `iif` match; (2) the same script replaces the
   unconditional `jump upnp_prerouting` in the package's
   `files/nftables.d/chain-post/dstnat/20-miniupnpd.nft` with a guard
@@ -213,6 +213,14 @@ These constraints can fail silently; check them when changing the image or route
   Unlike `flowtable-no-wandev.nft`, these two snippets need no uci entry -- fw4
   auto-includes anything under `/usr/share/nftables.d/chain-post/<chain>/` -- but they are
   image content, so sysupgrade does not preserve them.
+
+- **LuCI UPnP discovery must support the hairpin rule format.** The upstream
+  `luci.upnp` rpcd plugin expects `iif` and no counter before DNAT, so removing
+  `iif` for hairpin can leave `get_status` empty even with active mappings.
+  `scripts/patch-upnp.py` allows an optional interface and counter, preserving
+  the four capture fields used for protocol, external port and destination.
+  It also accepts `ip protocol` and `meta l4proto` protocol expressions.
+  Feed anchor drift fails the build instead of silently shipping the old parser.
 
 - **qosify silently ignores `overhead` unless `overhead_type` is `manual`.** Its init
   script reads the byte count only inside the `manual` branch of the `overhead_type` case;

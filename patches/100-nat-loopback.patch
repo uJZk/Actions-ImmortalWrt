@@ -1,0 +1,24 @@
+Drop the iif match from the nftables rules so UPnP mappings support NAT loopback
+(hairpin).
+
+miniupnpd writes every DNAT rule with `iif <ext_ifname>`, so a LAN client
+reaching the router's own public address never matches.
+
+Without the iif the rule is only proto+dport, which would DNAT LAN-to-LAN
+traffic on the same port. The narrowing moves to the jump: OpenWrt's
+nftables.d/chain-post/dstnat/20-miniupnpd.nft enters upnp_prerouting only for
+`fib daddr type local` outside the LAN/tailscale prefixes, and a return SNAT is
+added under nftables.d/chain-post/srcnat/. Both are required; either alone is
+broken.
+
+--- a/configure
++++ b/configure
+@@ -1011,7 +1011,7 @@
+ echo "" >> ${CONFIGFILE}
+ 
+ echo "/* include interface name in pf, ipf and nftables rules */" >> ${CONFIGFILE}
+-echo "#define USE_IFNAME_IN_RULES" >> ${CONFIGFILE}
++echo "/* USE_IFNAME_IN_RULES intentionally left undefined - see OpenWrt patch 100-nat-loopback.patch */" >> ${CONFIGFILE}
+ echo "" >> ${CONFIGFILE}
+ 
+ echo "/* Experimental NFQUEUE support. */" >> ${CONFIGFILE}
