@@ -34,10 +34,13 @@ status = Path('feeds/luci/applications/luci-app-upnp/root/usr/share/rpcd/ucode/l
 status_text = status.read_text()
 status_text = replace_once(status_text,
     r'/^\t\tiif ".+" @nh,72,8 (0x6|0x11) th dport ([0-9]+) dnat ip to ([0-9.]+):([0-9]+)/',
-    r'/^\s*(?:iif(?:name)? "[^"]+"\s+)?(?:@nh,72,8|ip protocol|meta l4proto) (0x6|0x11|tcp|udp) (?:th|tcp|udp) dport ([0-9]+) (?:counter packets [0-9]+ bytes [0-9]+ )?dnat ip to ([0-9.]+):([0-9]+)/', status)
+    r'/^\s*(iif(name)? "[^"]+"\s+)?(@nh,72,8|ip protocol|meta l4proto) (0x6|0x11|tcp|udp) (th|tcp|udp) dport ([0-9]+) (counter packets [0-9]+ bytes [0-9]+ )?dnat ip to ([0-9.]+):([0-9]+)/', status)
 status_text = replace_once(status_text,
     "proto: (m[1] == '0x6') ? 'TCP' : 'UDP',",
-    "proto: (m[1] == '0x6' || m[1] == 'tcp') ? 'TCP' : 'UDP',", status)
+    "proto: (m[4] == '0x6' || m[4] == 'tcp') ? 'TCP' : 'UDP',", status)
+status_text = replace_once(status_text,
+    "extport: +m[2],\n\t\t\t\t\t\t\tintaddr: arrtoip(iptoarr(m[3])),\n\t\t\t\t\t\t\tintport: +m[4],",
+    "extport: +m[6],\n\t\t\t\t\t\t\tintaddr: arrtoip(iptoarr(m[8])),\n\t\t\t\t\t\t\tintport: +m[9],", status)
 # Validate all anchors before writing any input.
 init.write_text(init_text)
 ui.write_text(ui_text)

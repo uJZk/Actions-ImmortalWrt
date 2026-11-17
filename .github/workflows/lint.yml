@@ -11,8 +11,7 @@ on:
       - 'files/usr/libexec/*'
       - 'files/usr/bin/*'
       - '.shellcheckrc'
-      - 'tests/test_podman_stack.py'
-      - 'tests/test_upnp_patches.py'
+      - 'tests/**'
       - 'scripts/**'
       - 'patches/*client-fallback*'
       - 'patches/*stun*'
@@ -27,8 +26,7 @@ on:
       - 'files/usr/libexec/*'
       - 'files/usr/bin/*'
       - '.shellcheckrc'
-      - 'tests/test_podman_stack.py'
-      - 'tests/test_upnp_patches.py'
+      - 'tests/**'
       - 'scripts/**'
       - 'patches/*client-fallback*'
       - 'patches/*stun*'
@@ -48,7 +46,7 @@ jobs:
         SUDO=
         [ "$(id -u)" -eq 0 ] || SUDO=sudo
         $SUDO apt-get update
-        $SUDO apt-get install -y curl shellcheck
+        $SUDO apt-get install -y curl shellcheck cmake build-essential libjson-c-dev
         curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest .
 
     - name: actionlint
@@ -59,11 +57,20 @@ jobs:
         SHELLCHECK_OPTS: -e SC2086,SC2046,SC2206,SC2128,SC2178,SC2154
       run: ./actionlint -color
 
+    - name: Build ucode
+      run: |
+        git clone --depth 1 https://github.com/jow-/ucode.git /tmp/ucode
+        cmake -S /tmp/ucode -B /tmp/ucode-build -DCMAKE_BUILD_TYPE=Release
+        cmake --build /tmp/ucode-build -j2
+
     - name: Test podman-stack
-      run: python3 tests/test_podman_stack.py
+      env:
+        UCODE_BIN: /tmp/ucode-build/ucode
+        UCODE_LIB: /tmp/ucode-build
+      run: /tmp/ucode-build/ucode -L /tmp/ucode-build tests/test_podman_stack.uc
 
     - name: Test UPnP patches
-      run: python3 tests/test_upnp_patches.py
+      run: /tmp/ucode-build/ucode -L /tmp/ucode-build tests/test_upnp_patches.uc
 
     - name: shellcheck
       run: shellcheck -S warning before-installing-feed.sh after-installing-feed.sh scripts/apply-upnp-patches.sh files/usr/bin/easyupdate.sh files/etc/hotplug.d/net/20-rps-xps files/etc/hotplug.d/iface/20-rps-xps files/usr/libexec/arm-xps-flowlimit files/etc/uci-defaults/90-luci-theme files/etc/uci-defaults/91-unbound-odhcpd files/etc/uci-defaults/92-flowtable-no-wandev files/etc/uci-defaults/93-router-defaults files/etc/uci-defaults/94-unbound-private-tld files/etc/uci-defaults/95-apk-mirror files/usr/bin/podman-stack

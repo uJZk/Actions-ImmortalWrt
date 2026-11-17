@@ -39,12 +39,13 @@ The image overlay still supplies the STUN set/input jump and hairpin return
 SNAT under `files/usr/share/nftables.d/`. These are required companions to the
 source patches, and are copied into the image by the normal build process.
 
-Local regression checks: `python3 tests/test_upnp_patches.py` covers 24 rule
-format combinations, unchanged upstream-anchor rejection, missing-guard
-rejection, repeat application and restoration of a missing hairpin patch.
-Shell syntax checks pass. The LuCI transformation also applies to the fetched
-ImmortalWrt `luci.upnp` blob `f72b57b7ba84188b9b78854bf7ad0711394a0045`.
-These checks do not execute rpcd/ucode or test live nftables. Router verification
+Local regression checks: `ucode tests/test_upnp_patches.uc` runs the patched
+`luci.upnp.get_status` handler with mocked rpcd dependencies against 24 rule
+formats. It checks mapping fields, unchanged upstream-anchor rejection,
+missing-guard rejection, repeat application and restoration of a missing
+hairpin patch. The fixture is the ImmortalWrt `luci.upnp` blob
+`f72b57b7ba84188b9b78854bf7ad0711394a0045`. These checks execute the ucode
+regex engine but do not exercise rpcd or live nftables. Router verification
 still needs `ubus call luci.upnp get_status`, visible mappings in LuCI,
 lease descriptions/expiry, and an actual hairpin connection.
 
@@ -60,3 +61,13 @@ ShellCheck on both changed shell scripts, Actionlint with ShellCheck, and
 `git diff --check`. No local firmware build was needed for these recipe changes.
 The next build must exercise the coordinated patches against the rolling feeds;
 live ubus, LuCI, STUN, IPv4/IPv6 fallback and NAT loopback checks remain open.
+
+## LuCI parser compatibility (2026-11-17)
+
+The nftables parser now uses capture groups supported by ucode and reads the
+updated capture indices. The UPnP and Podman regression suites run in ucode;
+CI builds the interpreter before running both suites. The local ucode checks
+passed for all 24 UPnP formats and the Podman mock scenarios, together with
+Bash syntax and `git diff --check`. These checks do not confirm live router
+mappings; after installing a new firmware release, call
+`ubus call luci.upnp get_status` and check the LuCI list and lease details.

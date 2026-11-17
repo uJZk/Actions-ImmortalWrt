@@ -23,7 +23,7 @@ The obsolete upstream `init_action` patch was removed; current upstream uses
 ubus. The upstream LuCI package is not pinned, so behavior can change between
 firmware builds.
 
-Verification: 12 mock-based tests in `tests/test_podman_stack.py`, ShellCheck,
+Verification: 12 mock-based tests in `tests/test_podman_stack.uc`, ShellCheck,
 actionlint and `git diff --check` passed. On the router Podman 5.8.4 accepted
 `podman stop --service` on a running networkless Alpine test container and
 reported `exited` with `StoppedByUser=false`; a separate manual Samba stop was
